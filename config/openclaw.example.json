@@ -1,0 +1,27 @@
+{
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "dmPolicy": "pairing",
+      "groups": {
+        "*": {
+          "requireMention": true
+        }
+      },
+      "streaming": {
+        "mode": "partial",
+        "preview": {
+          "toolProgress": false
+        }
+      },
+      "linkPreview": true
+    }
+  },
+  "skills": {
+    "load": {
+      "extraDirs": [
+        "./skills"
+      ]
+    }
+  }
+}

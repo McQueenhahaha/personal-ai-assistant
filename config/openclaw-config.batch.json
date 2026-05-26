@@ -1,0 +1,49 @@
+[
+  {
+    "path": "gateway.mode",
+    "value": "local"
+  },
+  {
+    "path": "skills.load.extraDirs",
+    "value": [
+      "./skills"
+    ]
+  },
+  {
+    "path": "models.mode",
+    "value": "merge"
+  },
+  {
+    "path": "models.providers.ollama",
+    "value": {
+      "baseUrl": "http://127.0.0.1:11434",
+      "apiKey": "ollama-local",
+      "api": "ollama",
+      "models": [
+        {
+          "id": "qwen3:8b",
+          "name": "Qwen3 8B Local",
+          "reasoning": true,
+          "input": [
+            "text"
+          ],
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "contextWindow": 8192,
+          "maxTokens": 8192
+        }
+      ],
+      "timeoutSeconds": 180
+    }
+  },
+  {
+    "path": "agents.defaults.model",
+    "value": {
+      "primary": "ollama/qwen3:8b"
+    }
+  }
+]

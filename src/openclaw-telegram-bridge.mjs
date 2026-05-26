@@ -1,0 +1,296 @@
+import fs from "node:fs";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { createTask, ensureQueue, listPendingTasks } from "./queue.mjs";
+import { envNumber, loadEnv, resolveFromCwd } from "./env.mjs";
+
+const DEFAULT_MESSAGE_FILE = "./.openclaw/state/agents/main/sessions/sessions.json.telegram-messages.json";
+const DEFAULT_STATE_FILE = "./data/state/openclaw-telegram-bridge-state.json";
+
+function boolEnv(name, fallback = false) {
+  const value = process.env[name];
+  if (value == null || value === "") return fallback;
+  return ["1", "true", "yes", "on"].includes(String(value).toLowerCase());
+}
+
+function hasArg(name) {
+  return process.argv.includes(name);
+}
+
+function readJson(file, fallback) {
+  if (!fs.existsSync(file)) return fallback;
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    return fallback;
+  }
+}
+
+function writeJson(file, value) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(value, null, 2), "utf8");
+}
+
+function readTelegramMessages(file) {
+  if (!fs.existsSync(file)) return [];
+  const lines = fs.readFileSync(file, "utf8").split(/\r?\n/).filter(Boolean);
+  const messages = [];
+  for (const line of lines) {
+    try {
+      const entry = JSON.parse(line.replace(/^\uFEFF/, ""));
+      const sourceMessage = entry?.node?.sourceMessage;
+      if (!sourceMessage?.message_id || !sourceMessage?.text) continue;
+      messages.push({
+        key: entry.key || `${sourceMessage.chat?.id || "chat"}:${sourceMessage.message_id}`,
+        chatId: String(sourceMessage.chat?.id || ""),
+        messageId: sourceMessage.message_id,
+        date: sourceMessage.date || 0,
+        text: sourceMessage.text
+      });
+    } catch {
+      // Ignore partially-written JSONL lines.
+    }
+  }
+  return messages.sort((a, b) => (a.date - b.date) || (a.messageId - b.messageId));
+}
+
+function commandParts(text) {
+  const trimmed = String(text || "").trim();
+  if (!trimmed.startsWith("/")) return null;
+  const firstSpace = trimmed.search(/\s/);
+  const rawCommand = firstSpace === -1 ? trimmed : trimmed.slice(0, firstSpace);
+  const command = rawCommand.replace(/@.+$/, "").toLowerCase();
+  const rest = firstSpace === -1 ? "" : trimmed.slice(firstSpace + 1).trim();
+  return { command, rest };
+}
+
+async function telegramApi(token, method, body) {
+  const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Telegram ${method} failed ${response.status}: ${text}`);
+  }
+  const json = await response.json();
+  if (!json.ok) throw new Error(`Telegram ${method} returned ok=false`);
+  return json.result;
+}
+
+async function send(token, chatId, text, dryRun) {
+  if (dryRun) {
+    console.log(`[dry-run send ${chatId}] ${text}`);
+    return;
+  }
+  await telegramApi(token, "sendMessage", {
+    chat_id: chatId,
+    text: text.slice(0, 3900),
+    disable_web_page_preview: false
+  });
+}
+
+function summarizeStatus() {
+  const dataDir = resolveFromCwd("./data");
+  const flags = ["assistant-desired-running.flag", "assistant-running.flag", "assistant-suspended-for-game.flag", "school-game-catchup-needed.flag"]
+    .map((name) => `${name}: ${fs.existsSync(path.join(dataDir, name)) ? "YES" : "NO"}`)
+    .join("\n");
+  const localInbox = process.env.LOCAL_QUEUE_INBOX || "./data/queues/local/inbox";
+  const codexInbox = process.env.CODEX_QUEUE_INBOX || "./data/queues/codex/inbox";
+  ensureQueue(localInbox);
+  ensureQueue(codexInbox);
+  return [
+    "AI 助手状态",
+    "",
+    flags,
+    "",
+    `Local 队列待处理：${listPendingTasks(localInbox).length}`,
+    `Codex 队列待处理：${listPendingTasks(codexInbox).length}`
+  ].join("\n");
+}
+
+function runPowerShell(script, args = [], timeoutMs = 180000) {
+  const result = spawnSync("powershell.exe", [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    path.resolve(script),
+    ...args
+  ], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    timeout: timeoutMs
+  });
+
+  const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
+  if (result.status !== 0) {
+    throw new Error(output || `PowerShell command failed with exit ${result.status}`);
+  }
+  return output || "命令已执行。";
+}
+
+function createRemoteCodexTask(text) {
+  const prompt = [
+    "用户通过 Telegram 远程下达 Codex 维护任务。",
+    "默认工作目录：D:\\AI\\personal-ai-assistant。",
+    "可以读取、修改本项目代码/脚本/文档，并运行必要验证。",
+    "必须遵守安全边界：不要泄露或打印 .env 密钥；不要发送邮件、提交表单、改账号、付费、删除大量文件或做不可逆操作，除非用户明确确认。",
+    "完成后用简体中文写 Telegram 可读的结果，说明改了什么、验证了什么、还有什么风险。",
+    "",
+    "用户任务：",
+    text
+  ].join("\n");
+
+  return createTask({
+    inboxPath: process.env.CODEX_QUEUE_INBOX || "./data/queues/codex/inbox",
+    title: text.slice(0, 60) || "Telegram Codex 远程任务",
+    prompt,
+    taskType: "remote-maintenance",
+    source: "openclaw-telegram-bridge",
+    priority: "high"
+  });
+}
+
+function createRemoteLocalTask(text) {
+  return createTask({
+    inboxPath: process.env.LOCAL_QUEUE_INBOX || "./data/queues/local/inbox",
+    title: text.slice(0, 60) || "Telegram 本地任务",
+    prompt: text,
+    taskType: "telegram-local",
+    source: "openclaw-telegram-bridge",
+    priority: "normal"
+  });
+}
+
+async function handleCommand({ token, chatId, text, dryRun }) {
+  const parsed = commandParts(text);
+  if (!parsed) return false;
+  const { command, rest } = parsed;
+
+  if (command === "/help" || command === "/start") {
+    await send(token, chatId, [
+      "可用命令：",
+      "/status - 查看助手状态",
+      "/codex <任务> - 让 Codex 修改/维护本项目",
+      "/local <任务> - 交给本地 Ollama 队列",
+      "/school - 立即检查学校邮件",
+      "/mail - 立即检查 Gmail",
+      "/game - 立即检查游戏资讯",
+      "/digest - 发送综合摘要"
+    ].join("\n"), dryRun);
+    return true;
+  }
+
+  if (command === "/status") {
+    await send(token, chatId, summarizeStatus(), dryRun);
+    return true;
+  }
+
+  if (command === "/codex" || command === "/dev" || command === "/update") {
+    if (!rest) {
+      await send(token, chatId, "用法：/codex 你要我在电脑上修改或检查的任务", dryRun);
+      return true;
+    }
+    const file = createRemoteCodexTask(rest);
+    await send(token, chatId, `Codex 远程任务已入队。\n\n${path.basename(file)}\n\n本地检测器会提醒 Codex 介入处理。`, dryRun);
+    return true;
+  }
+
+  if (command === "/local") {
+    if (!rest) {
+      await send(token, chatId, "用法：/local 要交给本地模型处理的任务", dryRun);
+      return true;
+    }
+    const file = createRemoteLocalTask(rest);
+    await send(token, chatId, `本地模型任务已入队。\n\n${path.basename(file)}`, dryRun);
+    return true;
+  }
+
+  const commandMap = {
+    "/school": ["./scripts/run-school-check.ps1", ["--force-school", "--ignore-game-mode"]],
+    "/mail": ["./scripts/run-school-check.ps1", ["--force-personal", "--ignore-game-mode"]],
+    "/game": ["./scripts/run-school-check.ps1", ["--force-game", "--ignore-game-mode"]],
+    "/digest": ["./scripts/run-digest.ps1", []]
+  };
+
+  if (commandMap[command]) {
+    const [script, args] = commandMap[command];
+    await send(token, chatId, `${command} 已收到，正在执行。`, dryRun);
+    const output = runPowerShell(script, args);
+    await send(token, chatId, output, dryRun);
+    return true;
+  }
+
+  return false;
+}
+
+async function processMessages({ messageFile, stateFile, token, chatId, dryRun, processExisting }) {
+  const messages = readTelegramMessages(messageFile);
+  let state = readJson(stateFile, null);
+
+  if (!state) {
+    state = { seenKeys: [] };
+    if (!processExisting) {
+      state.seenKeys = messages.map((message) => message.key).slice(-2000);
+      writeJson(stateFile, state);
+      console.log(`OpenClaw Telegram bridge bootstrapped ${state.seenKeys.length} existing message(s).`);
+      return 0;
+    }
+  }
+
+  const seen = new Set(state.seenKeys || []);
+  let handled = 0;
+  for (const message of messages) {
+    if (seen.has(message.key)) continue;
+    seen.add(message.key);
+    if (String(message.chatId) !== String(chatId)) continue;
+    try {
+      if (await handleCommand({ token, chatId, text: message.text, dryRun })) {
+        handled += 1;
+      }
+    } catch (error) {
+      await send(token, chatId, `命令执行失败：${error.message || String(error)}`, dryRun);
+    }
+  }
+
+  state.seenKeys = [...seen].slice(-2000);
+  writeJson(stateFile, state);
+  return handled;
+}
+
+async function main() {
+  loadEnv();
+  const once = hasArg("--once");
+  const dryRun = hasArg("--dry-run");
+  const processExisting = hasArg("--process-existing");
+
+  if (!boolEnv("ENABLE_OPENCLAW_TELEGRAM_BRIDGE", true)) {
+    console.log("OpenClaw Telegram bridge disabled. Set ENABLE_OPENCLAW_TELEGRAM_BRIDGE=true to enable.");
+    return;
+  }
+
+  const token = process.env.TELEGRAM_BOT_TOKEN || "";
+  const chatId = String(process.env.TELEGRAM_CHAT_ID || "");
+  if (!token || !chatId) {
+    throw new Error("OpenClaw Telegram bridge needs TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.");
+  }
+
+  const messageFile = resolveFromCwd(process.env.OPENCLAW_TELEGRAM_MESSAGES_FILE || DEFAULT_MESSAGE_FILE);
+  const stateFile = resolveFromCwd(process.env.OPENCLAW_TELEGRAM_BRIDGE_STATE_FILE || DEFAULT_STATE_FILE);
+  const pollSeconds = envNumber("OPENCLAW_TELEGRAM_BRIDGE_POLL_SECONDS", 3);
+
+  console.log("OpenClaw Telegram bridge started.");
+  while (true) {
+    const handled = await processMessages({ messageFile, stateFile, token, chatId, dryRun, processExisting });
+    if (handled > 0) console.log(`Handled ${handled} OpenClaw Telegram command(s).`);
+    if (once) return;
+    await new Promise((resolve) => setTimeout(resolve, pollSeconds * 1000));
+  }
+}
+
+main().catch((error) => {
+  console.error(error.stack || error.message);
+  process.exitCode = 1;
+});

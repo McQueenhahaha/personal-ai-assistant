@@ -1,0 +1,21 @@
+{
+  "name": "personal-ai-assistant",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "digest": "node ./src/index.mjs digest",
+    "school:check": "node ./src/school-check.mjs",
+    "queue:local": "node ./src/queue-worker.mjs local",
+    "queue:codex": "node ./src/codex-queue-worker.mjs",
+    "queue:codex:monitor": "node ./src/codex-queue-monitor.mjs",
+    "queue:codex:auto": "node ./src/codex-auto-worker.mjs",
+    "check": "node --check ./src/index.mjs && node --check ./src/rss.mjs && node --check ./src/mail-drop.mjs && node --check ./src/openai.mjs && node --check ./src/local-ai.mjs && node --check ./src/queue.mjs && node --check ./src/queue-worker.mjs && node --check ./src/codex-queue-worker.mjs && node --check ./src/codex-queue-monitor.mjs && node --check ./src/codex-auto-worker.mjs && node --check ./src/school-check.mjs && node --check ./src/send-telegram-file.mjs && node --check ./src/telegram.mjs && node --check ./src/openclaw-telegram-bridge.mjs"
+  },
+  "engines": {
+    "node": ">=22.14"
+  },
+  "dependencies": {
+    "@openai/codex": "0.133.0"
+  }
+}

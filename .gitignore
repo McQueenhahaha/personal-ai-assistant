@@ -1,0 +1,78 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*secret*
+*token*
+*cookie*
+*credentials*
+config/google-oauth-client.json
+config/*oauth*.json
+config/*secret*.json
+
+# Private assistant state and user data
+.openclaw/
+data/
+startup-backup*/
+*.lnk
+
+# Mail, browser, and account data
+*.eml
+*.mbox
+*.pst
+*.ost
+Cookies
+Cookies-journal
+Login Data
+Login Data-journal
+Local State
+Default/
+Profile */
+BrowserMetrics/
+
+# Logs and runtime output
+*.log
+logs/
+*.jsonl
+tmp/
+temp/
+cache/
+.cache/
+
+# Node / frontend build output
+node_modules/
+dist/
+build/
+.next/
+.nuxt/
+coverage/
+
+# Python and virtual environments
+venv/
+.venv/
+env/
+.envrc
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# Local databases and binary state
+*.db
+*.sqlite
+*.sqlite3
+*.ldb
+*.leveldb
+*.bak
+*.tmp
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
