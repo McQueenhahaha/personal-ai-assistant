@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "node --test",
+    "lint": "eslint src test",
     "digest": "node ./src/index.mjs digest",
     "school:check": "node ./src/school-check.mjs",
     "queue:local": "node ./src/queue-worker.mjs local",
@@ -18,5 +19,8 @@
   },
   "dependencies": {
     "@openai/codex": "0.133.0"
+  },
+  "devDependencies": {
+    "eslint": "^10.5.0"
   }
 }
