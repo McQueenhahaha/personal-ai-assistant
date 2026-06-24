@@ -6,6 +6,15 @@ import { envNumber, loadEnv, projectRoot, resolveFromCwd } from "./env.mjs";
 
 const DEFAULT_MESSAGE_FILE = "./.openclaw/state/agents/main/sessions/sessions.json.telegram-messages.json";
 const DEFAULT_STATE_FILE = "./data/state/openclaw-telegram-bridge-state.json";
+const MAINTENANCE_ACTIONS = [
+  "dism-restorehealth",
+  "dism-scanhealth",
+  "sfc-scannow",
+  "defender-quickscan",
+  "defender-status",
+  "disk-reliability",
+  "volume-status"
+];
 
 function boolEnv(name, fallback = false) {
   const value = process.env[name];
@@ -175,6 +184,7 @@ async function handleCommand({ token, chatId, text, dryRun }) {
       "/status - 查看助手状态",
       "/codex <任务> - 让 Codex 修改/维护本项目",
       "/local <任务> - 交给本地 Ollama 队列",
+      "/maint <动作> - 派发管理员维护任务",
       "/school - 立即检查学校邮件",
       "/mail - 立即检查 Gmail",
       "/game - 立即检查游戏资讯",
@@ -201,6 +211,33 @@ async function handleCommand({ token, chatId, text, dryRun }) {
     const flagFile = resolveFromCwd("./data/state/assistant-paused.flag");
     fs.rmSync(flagFile, { force: true });
     await send(token, chatId, "已恢复。", dryRun);
+    return true;
+  }
+
+  if (command === "/maint") {
+    const action = rest;
+    if (!action) {
+      await send(token, chatId, [
+        "用法：/maint <动作>",
+        "",
+        "可用动作：",
+        MAINTENANCE_ACTIONS.join(", ")
+      ].join("\n"), dryRun);
+      return true;
+    }
+    if (!/^[a-z][a-z0-9-]+$/.test(action)) {
+      await send(token, chatId, "动作名不合法", dryRun);
+      return true;
+    }
+
+    await send(token, chatId, `维护任务已派发：${action}，执行中…`, dryRun);
+    const output = runPowerShell(
+      "./scripts/admin-maintenance/request-admin-maintenance.ps1",
+      ["-Action", action, "-TimeoutSeconds", "600"],
+      620000
+    );
+    const resultText = output.length > 3500 ? `${output.slice(0, 3500)}\n\n...输出已截断` : output;
+    await send(token, chatId, resultText, dryRun);
     return true;
   }
 
