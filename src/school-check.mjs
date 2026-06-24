@@ -124,7 +124,7 @@ function runGmailExport({ maxMessages, query, account }) {
   return (result.stdout || "").trim();
 }
 
-function parseOutlookSnapshot(file) {
+export function parseOutlookSnapshot(file) {
   const content = fs.readFileSync(file, "utf8");
   const sections = content.split(/^## /m).slice(1);
   const messages = [];
@@ -153,7 +153,7 @@ function parseOutlookSnapshot(file) {
   return messages;
 }
 
-function schoolMessagesFromDrops(maxFiles) {
+export function schoolMessagesFromDrops(maxFiles) {
   const drops = collectMailDrops({
     schoolDir: process.env.SCHOOL_MAIL_DROP_DIR || "./data/school-mail-drop",
     personalDir: "./data/__no-personal-for-school-check",
@@ -184,7 +184,7 @@ function schoolMessagesFromDrops(maxFiles) {
     .sort((a, b) => String(b.date).localeCompare(String(a.date)));
 }
 
-function parseGmailSnapshot(file) {
+export function parseGmailSnapshot(file) {
   const content = fs.readFileSync(file, "utf8");
   const codeBlock = content.match(/```text\r?\n([\s\S]*?)```/);
   const body = codeBlock ? codeBlock[1] : content;
@@ -212,7 +212,7 @@ function parseGmailSnapshot(file) {
   return messages;
 }
 
-function personalMessagesFromDrops(maxFiles) {
+export function personalMessagesFromDrops(maxFiles) {
   const drops = collectMailDrops({
     schoolDir: "./data/__no-school-for-personal-check",
     personalDir: process.env.PERSONAL_MAIL_DROP_DIR || "./data/personal-mail-drop",
