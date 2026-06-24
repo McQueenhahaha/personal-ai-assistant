@@ -21,7 +21,18 @@ function codexEntrypoint(root) {
   return path.join(root, "node_modules", "@openai", "codex", "bin", "codex.js");
 }
 
-function buildPrompt(task, root = projectRoot()) {
+export function buildPrompt(task, root = projectRoot()) {
+  if (task.taskType === "telegram-chat") {
+    return [
+      "你在回答用户通过 Telegram 发来的提问或闲聊，用简体中文、简洁、口语化回答。",
+      "严格限制：只回答，不要修改任何文件、不要运行有副作用或改系统的命令、不要安装/卸载软件、不要改配置或计划任务。",
+      "如果用户的需求确实需要这些操作，不要执行，而是简短说明并建议用户改用 /codex 指令。",
+      "",
+      "用户消息：",
+      task.prompt
+    ].join("\n");
+  }
+
   return [
     "你是通过本地 Codex 自动 worker 运行的 Codex。",
     "任务来自用户的 Telegram /codex 指令。请自动完成任务，并在最后输出适合 Telegram 阅读的简体中文结果。",
@@ -354,7 +365,7 @@ export async function processCodexAutoQueue({ notify = true } = {}) {
       let task;
       try {
         task = readTask(claimed);
-        if (notify) {
+        if (notify && task.taskType !== "telegram-chat") {
           await sendTelegramMessage(`Codex 任务已开始：${task.title}\n状态：已领取到 processing，正在启动 Codex。`);
         }
         const notifyStatusUpdates = boolEnv("CODEX_AUTO_STATUS_UPDATES", true);
@@ -364,7 +375,7 @@ export async function processCodexAutoQueue({ notify = true } = {}) {
           prompt: buildPrompt(task, root),
           taskStem,
           onProgress: async ({ elapsedSeconds, jsonLogFile }) => {
-            if (notify && notifyStatusUpdates) {
+            if (notify && notifyStatusUpdates && task.taskType !== "telegram-chat") {
               await sendTelegramMessage(buildProgressMessage({ task, elapsedSeconds, jsonLogFile }));
             }
           }

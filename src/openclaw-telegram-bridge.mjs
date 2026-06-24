@@ -216,6 +216,22 @@ function createRemoteLocalTask(text) {
   });
 }
 
+function createChatTask(text) {
+  return createTask({
+    inboxPath: process.env.CODEX_QUEUE_INBOX || "./data/queues/codex/inbox",
+    title: text.slice(0, 60) || "Telegram 提问",
+    prompt: text,
+    taskType: "telegram-chat",
+    source: "openclaw-telegram-bridge",
+    priority: "normal"
+  });
+}
+
+async function handleFreeText({ token, chatId, text, dryRun }) {
+  createChatTask(text);
+  await send(token, chatId, "🤔 收到，正在思考，稍等…（由 Codex 回答）", dryRun);
+}
+
 async function handleCommand({ token, chatId, text, dryRun }) {
   const parsed = commandParts(text);
   if (!parsed) return false;
@@ -339,6 +355,12 @@ async function processMessages({ messageFile, stateFile, token, chatId, dryRun, 
     try {
       if (await handleCommand({ token, chatId, text: message.text, dryRun })) {
         handled += 1;
+      } else {
+        const t = String(message.text || "").trim();
+        if (t && !t.startsWith("/")) {
+          await handleFreeText({ token, chatId, text: message.text, dryRun });
+          handled += 1;
+        }
       }
     } catch (error) {
       await send(token, chatId, `命令执行失败：${error.message || String(error)}`, dryRun);
