@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test": "node --test",
     "digest": "node ./src/index.mjs digest",
     "school:check": "node ./src/school-check.mjs",
     "queue:local": "node ./src/queue-worker.mjs local",
