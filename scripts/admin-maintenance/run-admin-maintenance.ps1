@@ -81,7 +81,18 @@ $Whitelist = @{
     Start-MpScan -ScanType QuickScan | Out-String
   }
   "defender-status" = {
-    Get-MpComputerStatus | Out-String
+    $s = Get-MpComputerStatus
+    $RealTimeProtection = if ($s.RealTimeProtectionEnabled) { "✓" } else { "✗" }
+    $TamperProtection = if ($s.IsTamperProtected) { "✓" } else { "✗" }
+    $ServiceStatus = if ($s.AMServiceEnabled) { "运行中" } else { "未运行" }
+
+    @(
+      "实时防护：$RealTimeProtection"
+      "病毒库：$($s.AntivirusSignatureAge) 天前更新（版本 $($s.AntivirusSignatureVersion)）"
+      "上次快扫：$($s.QuickScanEndTime)"
+      "篡改保护：$TamperProtection"
+      "服务：$ServiceStatus"
+    ) | Out-String
   }
   "disk-reliability" = {
     Get-PhysicalDisk | Get-StorageReliabilityCounter | Out-String

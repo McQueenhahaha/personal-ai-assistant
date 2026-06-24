@@ -15,6 +15,29 @@ const MAINTENANCE_ACTIONS = [
   "disk-reliability",
   "volume-status"
 ];
+const MAINTENANCE_COMMANDS = {
+  "/defender_status": "defender-status",
+  "/defender_scan": "defender-quickscan",
+  "/sfc_scan": "sfc-scannow",
+  "/dism_restore": "dism-restorehealth",
+  "/dism_scan": "dism-scanhealth",
+  "/disk_status": "volume-status",
+  "/disk_health": "disk-reliability"
+};
+const TELEGRAM_COMMAND_MENU = [
+  { command: "help", description: "帮助" },
+  { command: "status", description: "助手状态" },
+  { command: "pause", description: "暂停自动检查" },
+  { command: "resume", description: "恢复自动检查" },
+  { command: "maint", description: "手动维护动作" },
+  { command: "defender_status", description: "Defender 状态" },
+  { command: "defender_scan", description: "Defender 快扫" },
+  { command: "sfc_scan", description: "SFC 系统文件修复" },
+  { command: "dism_restore", description: "DISM 修复组件" },
+  { command: "dism_scan", description: "DISM 扫描组件" },
+  { command: "disk_status", description: "磁盘/分区状态" },
+  { command: "disk_health", description: "磁盘可靠性" }
+];
 
 function boolEnv(name, fallback = false) {
   const value = process.env[name];
@@ -140,6 +163,37 @@ function runPowerShell(script, args = [], timeoutMs = 180000) {
   return output || "命令已执行。";
 }
 
+async function registerTelegramCommandMenu(token, dryRun) {
+  if (dryRun) {
+    console.log(`[dry-run setMyCommands] ${TELEGRAM_COMMAND_MENU.map(({ command }) => command).join(", ")}`);
+    return;
+  }
+
+  try {
+    await telegramApi(token, "setMyCommands", { commands: TELEGRAM_COMMAND_MENU });
+    console.log("Telegram command menu registered.");
+  } catch (error) {
+    console.warn(`Telegram command menu registration failed: ${error.message || String(error)}`);
+  }
+}
+
+async function dispatchMaintenance({ token, chatId, action, dryRun }) {
+  const actionToken = String(action || "").trim();
+  if (!/^[a-z][a-z0-9-]+$/.test(actionToken)) {
+    await send(token, chatId, "动作名不合法", dryRun);
+    return;
+  }
+
+  await send(token, chatId, `维护任务已派发：${actionToken}，执行中…`, dryRun);
+  const output = runPowerShell(
+    "./scripts/admin-maintenance/request-admin-maintenance.ps1",
+    ["-Action", actionToken, "-TimeoutSeconds", "600"],
+    620000
+  );
+  const resultText = output.length > 3500 ? `${output.slice(0, 3500)}\n\n...输出已截断` : output;
+  await send(token, chatId, resultText, dryRun);
+}
+
 function createRemoteCodexTask(text) {
   const prompt = [
     "用户通过 Telegram 远程下达 Codex 维护任务。",
@@ -185,6 +239,7 @@ async function handleCommand({ token, chatId, text, dryRun }) {
       "/codex <任务> - 让 Codex 修改/维护本项目",
       "/local <任务> - 交给本地 Ollama 队列",
       "/maint <动作> - 派发管理员维护任务",
+      "也可以点左下角 Menu 按钮选择维护命令。",
       "/school - 立即检查学校邮件",
       "/mail - 立即检查 Gmail",
       "/game - 立即检查游戏资讯",
@@ -214,6 +269,11 @@ async function handleCommand({ token, chatId, text, dryRun }) {
     return true;
   }
 
+  if (MAINTENANCE_COMMANDS[command]) {
+    await dispatchMaintenance({ token, chatId, action: MAINTENANCE_COMMANDS[command], dryRun });
+    return true;
+  }
+
   if (command === "/maint") {
     const action = rest;
     if (!action) {
@@ -225,19 +285,7 @@ async function handleCommand({ token, chatId, text, dryRun }) {
       ].join("\n"), dryRun);
       return true;
     }
-    if (!/^[a-z][a-z0-9-]+$/.test(action)) {
-      await send(token, chatId, "动作名不合法", dryRun);
-      return true;
-    }
-
-    await send(token, chatId, `维护任务已派发：${action}，执行中…`, dryRun);
-    const output = runPowerShell(
-      "./scripts/admin-maintenance/request-admin-maintenance.ps1",
-      ["-Action", action, "-TimeoutSeconds", "600"],
-      620000
-    );
-    const resultText = output.length > 3500 ? `${output.slice(0, 3500)}\n\n...输出已截断` : output;
-    await send(token, chatId, resultText, dryRun);
+    await dispatchMaintenance({ token, chatId, action, dryRun });
     return true;
   }
 
@@ -334,6 +382,7 @@ async function main() {
   const stateFile = resolveFromCwd(process.env.OPENCLAW_TELEGRAM_BRIDGE_STATE_FILE || DEFAULT_STATE_FILE);
   const pollSeconds = envNumber("OPENCLAW_TELEGRAM_BRIDGE_POLL_SECONDS", 3);
 
+  await registerTelegramCommandMenu(token, dryRun);
   console.log("OpenClaw Telegram bridge started.");
   while (true) {
     const handled = await processMessages({ messageFile, stateFile, token, chatId, dryRun, processExisting });
