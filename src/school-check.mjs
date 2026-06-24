@@ -8,6 +8,7 @@ import { classifyPersonalMessage, classifySchoolMessage } from "./school/classif
 import { collectDeadlines } from "./school/deadlines.mjs";
 import { countGameSources, gameKey, gamePrefix, translateGameTitle } from "./school/game-news.mjs";
 import { parseGmailSnapshot, parseOutlookSnapshot, personalMessagesFromDrops, schoolMessagesFromDrops } from "./school/mail-drops.mjs";
+import { sendOrPrint } from "./school/notifier.mjs";
 import { dueSlots } from "./school/schedule.mjs";
 import { compactLine, formatPersonalSummary, formatSchoolSummary } from "./school/summaries.mjs";
 import { loadState, saveState, statePath } from "./school/state.mjs";
@@ -18,6 +19,7 @@ export { classifySchoolMessage, classifyPersonalMessage, translatePersonalSubjec
 export { MONTHS, monthNumber, to24Hour, localTimeToUtc, extractYearFallback, extractDeadlinesFromMessage, collectDeadlines } from "./school/deadlines.mjs";
 export { gameKey, countGameSources, translateGameTitle, gamePrefix } from "./school/game-news.mjs";
 export { parseGmailSnapshot, parseOutlookSnapshot, personalMessagesFromDrops, schoolMessagesFromDrops };
+export { sendOrPrint };
 export { compactLine, parseField, formatSchoolSummary, formatPersonalSummary } from "./school/summaries.mjs";
 export { loadState, saveState, statePath };
 
@@ -104,14 +106,6 @@ function formatGameSummary(items, { slotLabel, timeZone }) {
 
   lines.push("", `时区：${timeZone}`);
   return lines.join("\n");
-}
-
-async function sendOrPrint(text, dryRun) {
-  if (dryRun) {
-    console.log(text);
-    return;
-  }
-  await sendTelegramMessage(text);
 }
 
 async function main() {
