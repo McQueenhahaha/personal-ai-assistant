@@ -18,7 +18,7 @@ function hasArg(name) {
   return process.argv.includes(name);
 }
 
-function formatGameSummary(items, { slotLabel, timeZone }) {
+export function formatGameSummary(items, { slotLabel, timeZone, maxItems = 8 }) {
   const lines = [
     `游戏资讯检查（墨尔本时间 ${slotLabel || "手动"}）`,
     ""
@@ -29,7 +29,7 @@ function formatGameSummary(items, { slotLabel, timeZone }) {
     return lines.join("\n");
   }
 
-  for (const item of items.slice(0, envNumber("GAME_CHECK_MAX_ITEMS", 8))) {
+  for (const item of items.slice(0, maxItems)) {
     const date = item.pubDate ? `｜${new Date(item.pubDate).toISOString().slice(0, 10)}` : "";
     const source = item.source ? `｜${item.source}` : "";
     const link = item.link ? `\n  ${item.link}` : "";
@@ -194,7 +194,7 @@ export async function runSchoolCheckCli() {
       : (slots.length > 0 ? slots.map((slot) => slot.label).join(", ") : `${activeGameCatchup?.slotLabel || "定时"} 补查`);
 
     if (newGameItems.length > 0 || forceGame) {
-      await sendOrPrint(formatGameSummary(newGameItems, { slotLabel, timeZone }), dryRun);
+      await sendOrPrint(formatGameSummary(newGameItems, { slotLabel, timeZone, maxItems: envNumber("GAME_CHECK_MAX_ITEMS", 8) }), dryRun);
       telegramMessagesSent += 1;
       gameUpdatesSent = newGameItems.length;
     }
