@@ -19,19 +19,31 @@ async function runDigest() {
   const maxPerQuery = envNumber("GAME_NEWS_MAX_PER_QUERY", 4);
   const mailMaxFiles = envNumber("MAIL_DROP_MAX_FILES", 20);
 
-  const gameNews = await fetchGameNews({
-    queries,
-    excludeTerms,
-    maxPerQuery,
-    locale,
-    ceid
-  });
+  let gameNews;
+  try {
+    gameNews = await fetchGameNews({
+      queries,
+      excludeTerms,
+      maxPerQuery,
+      locale,
+      ceid
+    });
+  } catch (err) {
+    console.warn("[digest] 游戏资讯获取失败，本次跳过：" + (err?.message || err));
+    gameNews = [];
+  }
 
-  const mailMessages = collectMailDrops({
-    schoolDir: process.env.SCHOOL_MAIL_DROP_DIR || "./data/school-mail-drop",
-    personalDir: process.env.PERSONAL_MAIL_DROP_DIR || "./data/personal-mail-drop",
-    maxFiles: mailMaxFiles
-  });
+  let mailMessages;
+  try {
+    mailMessages = collectMailDrops({
+      schoolDir: process.env.SCHOOL_MAIL_DROP_DIR || "./data/school-mail-drop",
+      personalDir: process.env.PERSONAL_MAIL_DROP_DIR || "./data/personal-mail-drop",
+      maxFiles: mailMaxFiles
+    });
+  } catch (err) {
+    console.warn("[digest] 邮件获取失败，本次跳过：" + (err?.message || err));
+    mailMessages = [];
+  }
 
   const digest = await buildDigest({
     title,
