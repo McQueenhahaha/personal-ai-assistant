@@ -1,11 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { envList, envNumber, loadEnv, resolveFromCwd, timestampForFile } from "./env.mjs";
 import { fetchGameNews } from "./rss.mjs";
 import { classifyPersonalMessage, classifySchoolMessage } from "./school/classifiers.mjs";
 import { collectDeadlines } from "./school/deadlines.mjs";
+import { runGmailExport, runOutlookExport } from "./school/exporters.mjs";
 import { countGameSources, gameKey, gamePrefix, translateGameTitle } from "./school/game-news.mjs";
 import { parseGmailSnapshot, parseOutlookSnapshot, personalMessagesFromDrops, schoolMessagesFromDrops } from "./school/mail-drops.mjs";
 import { sendOrPrint } from "./school/notifier.mjs";
@@ -17,6 +17,7 @@ import { sendTelegramMessage } from "./telegram.mjs";
 export { zonedParts, dateKeyInZone, minutesInZone, parseClock, dueSlots } from "./school/schedule.mjs";
 export { classifySchoolMessage, classifyPersonalMessage, translatePersonalSubject } from "./school/classifiers.mjs";
 export { MONTHS, monthNumber, to24Hour, localTimeToUtc, extractYearFallback, extractDeadlinesFromMessage, collectDeadlines } from "./school/deadlines.mjs";
+export { runGmailExport, runOutlookExport };
 export { gameKey, countGameSources, translateGameTitle, gamePrefix } from "./school/game-news.mjs";
 export { parseGmailSnapshot, parseOutlookSnapshot, personalMessagesFromDrops, schoolMessagesFromDrops };
 export { sendOrPrint };
@@ -27,63 +28,6 @@ const DEFAULT_TIME_ZONE = "Australia/Melbourne";
 
 function hasArg(name) {
   return process.argv.includes(name);
-}
-
-function runOutlookExport({ days, maxMessages, syncWaitSeconds }) {
-  const script = path.resolve("scripts", "export-outlook-mail.ps1");
-  const result = spawnSync(
-    "powershell.exe",
-    [
-      "-NoProfile",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-File",
-      script,
-      "-Days",
-      String(days),
-      "-MaxMessages",
-      String(maxMessages),
-      "-SyncWaitSeconds",
-      String(syncWaitSeconds)
-    ],
-    {
-      cwd: process.cwd(),
-      encoding: "utf8"
-    }
-  );
-
-  if (result.status !== 0) {
-    throw new Error((result.stderr || result.stdout || "Outlook export failed").trim());
-  }
-
-  return (result.stdout || "").trim();
-}
-
-function runGmailExport({ maxMessages, query, account }) {
-  const script = path.resolve("scripts", "export-gmail-mail.ps1");
-  const args = [
-    "-NoProfile",
-    "-ExecutionPolicy",
-    "Bypass",
-    "-File",
-    script,
-    "-MaxMessages",
-    String(maxMessages)
-  ];
-
-  if (query) args.push("-Query", query);
-  if (account) args.push("-Account", account);
-
-  const result = spawnSync("powershell.exe", args, {
-    cwd: process.cwd(),
-    encoding: "utf8"
-  });
-
-  if (result.status !== 0) {
-    throw new Error((result.stderr || result.stdout || "Gmail export failed").trim());
-  }
-
-  return (result.stdout || "").trim();
 }
 
 function formatGameSummary(items, { slotLabel, timeZone }) {
