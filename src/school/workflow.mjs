@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { formatConfigReport, reportConfig } from "../config-doctor.mjs";
 import { envList, envNumber, loadEnv, resolveFromCwd, timestampForFile } from "../env.mjs";
 import { fetchGameNews } from "../rss.mjs";
 import { sendTelegramMessage } from "../telegram.mjs";
@@ -42,6 +43,7 @@ export function formatGameSummary(items, { slotLabel, timeZone, maxItems = 8 }) 
 
 export async function runSchoolCheckCli() {
   loadEnv();
+  console.log(formatConfigReport(reportConfig()));
 
   const now = new Date();
   const dryRun = hasArg("--dry-run");

@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { formatConfigReport, reportConfig } from "./config-doctor.mjs";
 import { buildDigest } from "./openai.mjs";
 import { collectMailDrops } from "./mail-drop.mjs";
 import { envList, envNumber, loadEnv, resolveFromCwd, timestampForFile } from "./env.mjs";
@@ -8,6 +9,7 @@ import { sendTelegramMessage } from "./telegram.mjs";
 
 async function runDigest() {
   loadEnv();
+  console.log(formatConfigReport(reportConfig()));
 
   const title = process.env.DIGEST_TITLE || "Daily personal AI digest";
   const queries = envList("GAME_QUERIES", ["gaming news", "Steam game updates"]);
