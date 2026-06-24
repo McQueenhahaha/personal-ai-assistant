@@ -3,6 +3,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { loadEnv, projectRoot, resolveFromCwd, timestampForFile } from "./env.mjs";
+import { runClaudeText } from "./brain/claude.mjs";
 import { claimTask, ensureQueue, listPendingTasks, readTask, writeFailure, writeResult } from "./queue.mjs";
 import { sendTelegramMessage } from "./telegram.mjs";
 
@@ -365,30 +366,37 @@ export async function processCodexAutoQueue({ notify = true } = {}) {
       let task;
       try {
         task = readTask(claimed);
+        const isChat = task.taskType === "telegram-chat";
         if (notify && task.taskType !== "telegram-chat") {
           await sendTelegramMessage(`Codex 任务已开始：${task.title}\n状态：已领取到 processing，正在启动 Codex。`);
         }
         const notifyStatusUpdates = boolEnv("CODEX_AUTO_STATUS_UPDATES", true);
         const taskStem = path.basename(claimed).replace(/\.[^.]+$/, "");
-        const execution = await runCodexExec({
-          root,
-          prompt: buildPrompt(task, root),
-          taskStem,
-          onProgress: async ({ elapsedSeconds, jsonLogFile }) => {
-            if (notify && notifyStatusUpdates && task.taskType !== "telegram-chat") {
-              await sendTelegramMessage(buildProgressMessage({ task, elapsedSeconds, jsonLogFile }));
+        const execution = isChat
+          ? { result: await runClaudeText(buildPrompt(task, root)) }
+          : await runCodexExec({
+            root,
+            prompt: buildPrompt(task, root),
+            taskStem,
+            onProgress: async ({ elapsedSeconds, jsonLogFile }) => {
+              if (notify && notifyStatusUpdates && task.taskType !== "telegram-chat") {
+                await sendTelegramMessage(buildProgressMessage({ task, elapsedSeconds, jsonLogFile }));
+              }
             }
-          }
-        });
+          });
         const outFile = writeResult({ inboxPath, taskFile: claimed, task, result: execution.result });
         results.push({ ok: true, task, outFile, log: execution.jsonLogFile });
-        if (notify) {
+        if (notify && isChat) {
+          await sendTelegramMessage(execution.result);
+        } else if (notify) {
           await sendTelegramMessage(`Codex 自动任务完成：${task.title}\n\n${execution.result}`);
         }
       } catch (error) {
         const outFile = writeFailure({ inboxPath, taskFile: claimed, task, error });
         results.push({ ok: false, task, outFile, error });
-        if (notify) {
+        if (notify && task?.taskType === "telegram-chat") {
+          await sendTelegramMessage(`回答失败：${error.message || String(error)}`);
+        } else if (notify) {
           await sendTelegramMessage(`Codex 自动任务失败：${task?.title || item.name}\n\n${error.message || String(error)}`);
         }
       }
