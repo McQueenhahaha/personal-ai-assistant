@@ -178,13 +178,29 @@ async function handleCommand({ token, chatId, text, dryRun }) {
       "/school - 立即检查学校邮件",
       "/mail - 立即检查 Gmail",
       "/game - 立即检查游戏资讯",
-      "/digest - 发送综合摘要"
+      "/digest - 发送综合摘要",
+      "/pause /resume - 暂停/恢复自动摘要和检查"
     ].join("\n"), dryRun);
     return true;
   }
 
   if (command === "/status") {
     await send(token, chatId, summarizeStatus(), dryRun);
+    return true;
+  }
+
+  if (command === "/pause") {
+    const flagFile = resolveFromCwd("./data/state/assistant-paused.flag");
+    fs.mkdirSync(path.dirname(flagFile), { recursive: true });
+    fs.writeFileSync(flagFile, `${new Date().toISOString()}\n`, "utf8");
+    await send(token, chatId, "已暂停自动摘要/检查。发 /resume 恢复。", dryRun);
+    return true;
+  }
+
+  if (command === "/resume") {
+    const flagFile = resolveFromCwd("./data/state/assistant-paused.flag");
+    fs.rmSync(flagFile, { force: true });
+    await send(token, chatId, "已恢复。", dryRun);
     return true;
   }
 

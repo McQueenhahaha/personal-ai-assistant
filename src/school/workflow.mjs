@@ -43,6 +43,11 @@ export function formatGameSummary(items, { slotLabel, timeZone, maxItems = 8 }) 
 
 export async function runSchoolCheckCli() {
   loadEnv();
+  if (fs.existsSync(resolveFromCwd("./data/state/assistant-paused.flag"))) {
+    console.log("[school-check] 已暂停, 跳过本次。");
+    return;
+  }
+
   console.log(formatConfigReport(reportConfig()));
 
   const now = new Date();

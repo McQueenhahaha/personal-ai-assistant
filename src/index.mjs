@@ -9,6 +9,11 @@ import { sendTelegramMessage } from "./telegram.mjs";
 
 async function runDigest() {
   loadEnv();
+  if (fs.existsSync(resolveFromCwd("./data/state/assistant-paused.flag"))) {
+    console.log("[digest] 已暂停(assistant-paused.flag), 跳过本次。");
+    return;
+  }
+
   console.log(formatConfigReport(reportConfig()));
 
   const title = process.env.DIGEST_TITLE || "Daily personal AI digest";
