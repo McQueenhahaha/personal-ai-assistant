@@ -5,7 +5,7 @@ import { generateWithOllama } from "./local-ai.mjs";
 const DIGEST_SECTION_LIMIT = 4;
 const REQUIRED_SECTIONS = ["RMIT / 学校", "个人邮件", "游戏资讯", "待办"];
 
-function outputText(responseJson) {
+export function outputText(responseJson) {
   if (typeof responseJson.output_text === "string") {
     return responseJson.output_text.trim();
   }
@@ -20,7 +20,7 @@ function outputText(responseJson) {
   return pieces.join("\n").trim();
 }
 
-function fieldValue(block, name) {
+export function fieldValue(block, name) {
   const match = block.match(new RegExp(`^- ${name}:\\s*(.+)$`, "im"));
   return match ? match[1].trim() : "";
 }
@@ -95,7 +95,7 @@ function parseOutlookSnapshot(message) {
   return messages;
 }
 
-function messageDateMs(message) {
+export function messageDateMs(message) {
   const date = new Date(message.date || message.modifiedAt || 0);
   return Number.isNaN(date.getTime()) ? 0 : date.getTime();
 }
@@ -131,7 +131,7 @@ function normalizeMailMessages(mailMessages) {
   return [...byKey.values()].sort((a, b) => messageDateMs(b) - messageDateMs(a));
 }
 
-function translateSchoolTitle(title) {
+export function translateSchoolTitle(title) {
   return title
     .replace(/^Recent Canvas notifications$/i, "Canvas 近期通知")
     .replace(/^Assignment Graded:\s*/i, "作业/测验已评分：")
@@ -156,11 +156,11 @@ function translateSchoolTitle(title) {
     .trim();
 }
 
-function compactLine(value) {
+export function compactLine(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
 
-function classifySchoolMessage(message) {
+export function classifySchoolMessage(message) {
   const subject = String(message.subject || "").toLowerCase();
   const text = `${message.subject}\n${message.body || ""}`.toLowerCase();
   if (/\bces\b|survey|questionnaire|complete your .*feedback|give your feedback/.test(subject)) return "问卷/反馈";
@@ -172,7 +172,7 @@ function classifySchoolMessage(message) {
   return "通知";
 }
 
-function classifyPersonalMessage(message) {
+export function classifyPersonalMessage(message) {
   const text = `${message.subject}\n${message.from}\n${message.labels || ""}`.toLowerCase();
 
   if (/security alert|verification code|2-step|password|sign-?in|logged in|someone signed|verify your device|identity was just linked|third-party .*application/.test(text)) {
@@ -224,7 +224,7 @@ function classifyPersonalMessage(message) {
   };
 }
 
-function formatSchoolItem(message) {
+export function formatSchoolItem(message) {
   const kind = classifySchoolMessage(message);
   const subject = translateSchoolTitle(compactLine(message.subject));
   const from = compactLine(message.from);
@@ -232,7 +232,7 @@ function formatSchoolItem(message) {
   return `- [${kind}] ${subject}${from ? `｜${from}` : ""}${date ? `｜${date}` : ""}`;
 }
 
-function formatPersonalItem(message) {
+export function formatPersonalItem(message) {
   const classification = classifyPersonalMessage(message);
   const subject = compactLine(message.subject);
   const from = compactLine(message.from);
@@ -240,7 +240,7 @@ function formatPersonalItem(message) {
   return `- [${classification.kind}] ${classification.action}：${subject}${from ? `｜${from}` : ""}${date ? `｜${date}` : ""}`;
 }
 
-function rankedPersonalMessages(messages) {
+export function rankedPersonalMessages(messages) {
   return messages
     .map((message) => ({ message, classification: classifyPersonalMessage(message) }))
     .sort((a, b) => {
@@ -249,7 +249,7 @@ function rankedPersonalMessages(messages) {
     });
 }
 
-function buildTodoItems({ schoolMessages, personalMessages }) {
+export function buildTodoItems({ schoolMessages, personalMessages }) {
   const items = [];
   const seen = new Set();
   const add = (value) => {
@@ -284,7 +284,7 @@ function buildTodoItems({ schoolMessages, personalMessages }) {
   return items.slice(0, DIGEST_SECTION_LIMIT);
 }
 
-function translateGameTitle(title) {
+export function translateGameTitle(title) {
   return title
     .replace(/\s+-\s+[^-]+$/g, "")
     .replace(/^Community Update No\.(\d+):\s*/i, "社区更新第 $1 期：")
@@ -319,7 +319,7 @@ function translateGameTitle(title) {
     .trim();
 }
 
-function gamePrefix(item) {
+export function gamePrefix(item) {
   if (item.sourceType === "tarkov-official") return "塔科夫官方";
   if (item.sourceType === "tarkov-bilibili") return "塔科夫/B站纱雾";
   if (item.game === "WARNO") return "WARNO 官方";
@@ -330,14 +330,14 @@ function gamePrefix(item) {
   return item.game || "游戏";
 }
 
-function formatGameItem(item) {
+export function formatGameItem(item) {
   const title = translateGameTitle(item.title);
   const source = item.source ? `｜${item.source}` : "";
   const link = item.link ? `\n  ${item.link}` : "";
   return `- [${gamePrefix(item)}] ${title}${source}${link}`;
 }
 
-function buildDeterministicDigest({ title, gameNews, schoolMessages, personalMessages }) {
+export function buildDeterministicDigest({ title, gameNews, schoolMessages, personalMessages }) {
   const lines = [title, ""];
 
   lines.push("RMIT / 学校");
@@ -382,7 +382,7 @@ function buildDeterministicDigest({ title, gameNews, schoolMessages, personalMes
   return lines.join("\n");
 }
 
-function sectionBulletCount(text, section) {
+export function sectionBulletCount(text, section) {
   const sectionIndex = text.indexOf(section);
   if (sectionIndex < 0) return 0;
 
@@ -400,7 +400,7 @@ function sectionBulletCount(text, section) {
     .length;
 }
 
-function digestLooksReasonable(text) {
+export function digestLooksReasonable(text) {
   if (!text || REQUIRED_SECTIONS.some((section) => !text.includes(section))) return false;
   if (/\b(?:gmail-snapshot|outlook-rmit-snapshot)-\d{4}/i.test(text)) return false;
   return REQUIRED_SECTIONS.every((section) => sectionBulletCount(text, section) <= DIGEST_SECTION_LIMIT);
