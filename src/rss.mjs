@@ -1,4 +1,4 @@
-function decodeEntities(value) {
+export function decodeEntities(value) {
   return value
     .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
     .replace(/&amp;/g, "&")
@@ -10,16 +10,16 @@ function decodeEntities(value) {
     .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)));
 }
 
-function stripTags(value) {
+export function stripTags(value) {
   return decodeEntities(value).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 }
 
-function tagValue(xml, tag) {
+export function tagValue(xml, tag) {
   const match = xml.match(new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)<\\/${tag}>`, "i"));
   return match ? stripTags(match[1]) : "";
 }
 
-function buildGoogleNewsUrl(query, locale, ceid) {
+export function buildGoogleNewsUrl(query, locale, ceid) {
   const params = new URLSearchParams({
     q: query,
     hl: locale,
@@ -29,17 +29,17 @@ function buildGoogleNewsUrl(query, locale, ceid) {
   return `https://news.google.com/rss/search?${params.toString()}`;
 }
 
-function absoluteUrl(base, href) {
+export function absoluteUrl(base, href) {
   return new URL(href, base).toString();
 }
 
-function parseItemDate(item) {
+export function parseItemDate(item) {
   if (!item?.pubDate) return null;
   const date = new Date(item.pubDate);
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function isFreshItem(item, maxAgeDays) {
+export function isFreshItem(item, maxAgeDays) {
   if (!Number.isFinite(maxAgeDays) || maxAgeDays <= 0) return true;
   const date = parseItemDate(item);
   if (!date) return false;
@@ -65,7 +65,7 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function parseRssItems(xml, sourceUrl) {
+export function parseRssItems(xml, sourceUrl) {
   const items = [];
   const matches = xml.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/gi);
 
@@ -90,7 +90,7 @@ function parseRssItems(xml, sourceUrl) {
   return items;
 }
 
-function slugTitle(urlPath) {
+export function slugTitle(urlPath) {
   const slug = urlPath
     .split("/")
     .filter(Boolean)
@@ -308,7 +308,7 @@ async function fetchWarThunderOfficial({ maxItems }) {
   return items;
 }
 
-function shouldExcludeItem(item, excludeTerms) {
+export function shouldExcludeItem(item, excludeTerms) {
   if (excludeTerms.length === 0) return false;
   const haystack = [
     item.title,
