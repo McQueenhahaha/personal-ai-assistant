@@ -229,7 +229,7 @@ function createChatTask(text) {
 
 async function handleFreeText({ token, chatId, text, dryRun }) {
   createChatTask(text);
-  await send(token, chatId, "🤔 收到，正在思考，稍等…（由 Codex 回答）", dryRun);
+  await send(token, chatId, "🤔 收到，正在思考，稍等…（由 Claude 回答）", dryRun);
 }
 
 async function handleCommand({ token, chatId, text, dryRun }) {
