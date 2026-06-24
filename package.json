@@ -6,6 +6,7 @@
   "scripts": {
     "test": "node --test",
     "lint": "eslint src test",
+    "verify": "npm test && npm run lint && npm run check",
     "digest": "node ./src/index.mjs digest",
     "school:check": "node ./src/school-check.mjs",
     "queue:local": "node ./src/queue-worker.mjs local",
