@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
-import { loadEnv, resolveFromCwd, timestampForFile } from "./env.mjs";
+import { loadEnv, projectRoot, resolveFromCwd, timestampForFile } from "./env.mjs";
 import { claimTask, ensureQueue, listPendingTasks, readTask, writeFailure, writeResult } from "./queue.mjs";
 import { sendTelegramMessage } from "./telegram.mjs";
 
@@ -21,7 +21,7 @@ function codexEntrypoint(root) {
   return path.join(root, "node_modules", "@openai", "codex", "bin", "codex.js");
 }
 
-function buildPrompt(task) {
+function buildPrompt(task, root = projectRoot()) {
   return [
     "你是通过本地 Codex 自动 worker 运行的 Codex。",
     "任务来自用户的 Telegram /codex 指令。请自动完成任务，并在最后输出适合 Telegram 阅读的简体中文结果。",
@@ -34,7 +34,7 @@ function buildPrompt(task) {
     "- 对卸载指定软件、清理明确指定软件残留、修改本项目代码/脚本，可以在合理范围内直接执行。",
     "",
     "执行要求：",
-    "- 默认工作目录是 D:\\AI\\personal-ai-assistant。",
+    `- 默认工作目录是 ${root}。`,
     "- 需要验证实际结果，不要只报告计划。",
     "- 最终回答要短，说明做了什么、验证了什么、是否还有残留风险。",
     "",
@@ -326,7 +326,7 @@ function runCodexExec({ root, prompt, taskStem, onProgress }) {
 export async function processCodexAutoQueue({ notify = true } = {}) {
   loadEnv();
 
-  const root = process.cwd();
+  const root = projectRoot();
   const inboxPath = process.env.CODEX_QUEUE_INBOX || "./data/queues/codex/inbox";
   const maxTasks = envNumber("CODEX_AUTO_MAX_TASKS", 1);
   const lockFile = resolveFromCwd(process.env.CODEX_AUTO_LOCK_FILE || "./data/state/codex-auto-worker.lock");
@@ -361,7 +361,7 @@ export async function processCodexAutoQueue({ notify = true } = {}) {
         const taskStem = path.basename(claimed).replace(/\.[^.]+$/, "");
         const execution = await runCodexExec({
           root,
-          prompt: buildPrompt(task),
+          prompt: buildPrompt(task, root),
           taskStem,
           onProgress: async ({ elapsedSeconds, jsonLogFile }) => {
             if (notify && notifyStatusUpdates) {

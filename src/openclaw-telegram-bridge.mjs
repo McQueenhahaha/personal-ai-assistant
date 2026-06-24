@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { createTask, ensureQueue, listPendingTasks } from "./queue.mjs";
-import { envNumber, loadEnv, resolveFromCwd } from "./env.mjs";
+import { envNumber, loadEnv, projectRoot, resolveFromCwd } from "./env.mjs";
 
 const DEFAULT_MESSAGE_FILE = "./.openclaw/state/agents/main/sessions/sessions.json.telegram-messages.json";
 const DEFAULT_STATE_FILE = "./data/state/openclaw-telegram-bridge-state.json";
@@ -134,7 +134,7 @@ function runPowerShell(script, args = [], timeoutMs = 180000) {
 function createRemoteCodexTask(text) {
   const prompt = [
     "用户通过 Telegram 远程下达 Codex 维护任务。",
-    "默认工作目录：D:\\AI\\personal-ai-assistant。",
+    `默认工作目录：${projectRoot()}。`,
     "可以读取、修改本项目代码/脚本/文档，并运行必要验证。",
     "必须遵守安全边界：不要泄露或打印 .env 密钥；不要发送邮件、提交表单、改账号、付费、删除大量文件或做不可逆操作，除非用户明确确认。",
     "完成后用简体中文写 Telegram 可读的结果，说明改了什么、验证了什么、还有什么风险。",

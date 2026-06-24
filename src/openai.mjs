@@ -20,90 +20,6 @@ function outputText(responseJson) {
   return pieces.join("\n").trim();
 }
 
-function fallbackDigest({ title, gameNews, schoolMessages, personalMessages }) {
-  return buildDeterministicDigest({ title, gameNews, schoolMessages, personalMessages });
-}
-
-function firstBullets(body, limit = 4) {
-  return body
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith("- "))
-    .slice(0, limit)
-    .map((line) => line.replace(/^\-\s*/, ""));
-}
-
-function translatePersonalBullet(value) {
-  const text = value.replace(/\s+/g, " ").trim();
-  const lower = text.toLowerCase();
-
-  if (lower.includes("xref") && lower.includes("survey")) {
-    return "Xref 调查问卷：可能与住宿或服务体验有关，建议确认是否需要填写。";
-  }
-  if (lower.includes("gaijin") || lower.includes("golden eagles")) {
-    return "Gaijin / 战雷兑换记录：已激活代码，作为消费或兑换凭证保留即可。";
-  }
-  if (lower.includes("anz") && lower.includes("interest")) {
-    return "ANZ 利率更新：如果你在用 ANZ Plus 储蓄，建议查看是否影响存款安排。";
-  }
-  if (lower.includes("kaggle") || lower.includes("ai agents")) {
-    return "Kaggle / AI Agents 活动：如果你想参加 AI 课程或挑战，单独打开邮件查看时间和报名方式。";
-  }
-  if (lower.includes("machida") || lower.includes("order confirmation")) {
-    return "Machida Shoten 订单确认：看起来是餐饮/订单收据，低优先级。";
-  }
-  if (lower.includes("afterpay") && lower.includes("privacy")) {
-    return "Afterpay 条款或隐私政策更新：通常为政策通知，低优先级。";
-  }
-  if (lower.includes("epic") && lower.includes("sale")) {
-    return "Epic Games 促销：游戏促销邮件，除非你正好要买游戏，否则低优先级。";
-  }
-  if (lower.includes("uber") && lower.includes("discount")) {
-    return "Uber 优惠：促销类邮件，低优先级。";
-  }
-  if (lower.includes("revolut")) {
-    return "Revolut 推荐/优惠：促销类邮件，低优先级。";
-  }
-
-  return text
-    .replace(/^Important \/ Worth Noticing:\s*/i, "值得注意：")
-    .replace(/^Low Priority \/ Receipts \/ Promotions:\s*/i, "低优先级/收据/促销：")
-    .replace(/Possible action:/gi, "建议：")
-    .replace(/Received/gi, "收到时间")
-    .replace(/Likely receipts only\.?/gi, "大概率只是收据。")
-    .replace(/review/gi, "查看")
-    .replace(/if this relates to/gi, "是否与你的")
-    .replace(/if you use/gi, "如果你使用")
-    .replace(/keep as receipt\/proof of activation/gi, "作为兑换凭证保留");
-}
-
-function chinesePersonalHighlights(messages, limit = 5) {
-  const seen = new Set();
-  const highlights = [];
-  const bullets = messages.flatMap((message) => firstBullets(message.body, 12));
-
-  for (const bullet of bullets) {
-    if (/^(query|max messages|account):/i.test(bullet)) continue;
-    const translated = translatePersonalBullet(bullet);
-    const key = translated.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    highlights.push(translated);
-    if (highlights.length >= limit) return highlights;
-  }
-
-  for (const message of messages) {
-    const translated = translatePersonalBullet(`${message.subject}｜${message.from}｜${message.date}`);
-    const key = translated.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    highlights.push(translated);
-    if (highlights.length >= limit) return highlights;
-  }
-
-  return highlights;
-}
-
 function fieldValue(block, name) {
   const match = block.match(new RegExp(`^- ${name}:\\s*(.+)$`, "im"));
   return match ? match[1].trim() : "";
@@ -215,33 +131,6 @@ function normalizeMailMessages(mailMessages) {
   return [...byKey.values()].sort((a, b) => messageDateMs(b) - messageDateMs(a));
 }
 
-function outlookSnapshotHighlights(messages, limit = 4) {
-  const seen = new Set();
-  const highlights = [];
-
-  for (const message of messages) {
-    const source = message.file && fs.existsSync(message.file)
-      ? fs.readFileSync(message.file, "utf8")
-      : message.body;
-    if (!source.includes("## ")) continue;
-    const sections = source.split(/^## /m).slice(1);
-    for (const section of sections) {
-      const [firstLine, ...rest] = section.split(/\r?\n/);
-      const subject = firstLine.trim();
-      const block = rest.join("\n");
-      const from = fieldValue(block, "From") || "unknown sender";
-      const received = fieldValue(block, "Received") || message.date;
-      const key = `${received}|${from}|${subject}`.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      highlights.push(`${translateSchoolTitle(subject)}｜${from}｜${received}`);
-      if (highlights.length >= limit) return highlights;
-    }
-  }
-
-  return highlights;
-}
-
 function translateSchoolTitle(title) {
   return title
     .replace(/^Recent Canvas notifications$/i, "Canvas 近期通知")
@@ -284,7 +173,6 @@ function classifySchoolMessage(message) {
 }
 
 function classifyPersonalMessage(message) {
-  const subject = String(message.subject || "");
   const text = `${message.subject}\n${message.from}\n${message.labels || ""}`.toLowerCase();
 
   if (/security alert|verification code|2-step|password|sign-?in|logged in|someone signed|verify your device|identity was just linked|third-party .*application/.test(text)) {

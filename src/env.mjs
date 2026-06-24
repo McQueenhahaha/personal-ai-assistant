@@ -1,6 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 
+export function projectRoot() {
+  return path.resolve(process.env.PROJECT_ROOT || process.cwd());
+}
+
 export function loadEnv(file = ".env") {
   const envPath = path.resolve(process.cwd(), file);
   if (!fs.existsSync(envPath)) return false;

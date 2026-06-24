@@ -7,6 +7,7 @@ import {
   envList,
   envNumber,
   loadEnv,
+  projectRoot,
   resolveFromCwd,
   timestampForFile
 } from "../src/env.mjs";
@@ -96,6 +97,17 @@ test("envNumber returns parsed numbers or fallback for invalid and missing value
   assert.equal(envNumber(numberKey, 7), 42.5);
   assert.equal(envNumber(invalidKey, 7), 7);
   assert.equal(envNumber(uniqueKey("MISSING_NUMBER"), 7), 7);
+});
+
+test("projectRoot uses PROJECT_ROOT when set and falls back to process.cwd()", (t) => {
+  restoreEnvAfter(t, ["PROJECT_ROOT"]);
+  const configuredRoot = path.join(os.tmpdir(), "pai-project-root", "..", "pai-project-root-final");
+
+  process.env.PROJECT_ROOT = configuredRoot;
+  assert.equal(projectRoot(), path.resolve(configuredRoot));
+
+  delete process.env.PROJECT_ROOT;
+  assert.equal(projectRoot(), path.resolve(process.cwd()));
 });
 
 test("resolveFromCwd resolves relative paths against process.cwd()", () => {
