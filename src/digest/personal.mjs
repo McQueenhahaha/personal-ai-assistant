@@ -1,3 +1,4 @@
+import { messageDateMs } from "./mail.mjs";
 import { compactLine } from "./text.mjs";
 
 export function classifyPersonalMessage(message) {
@@ -58,4 +59,13 @@ export function formatPersonalItem(message) {
   const from = compactLine(message.from);
   const date = compactLine(message.date);
   return `- [${classification.kind}] ${classification.action}：${subject}${from ? `｜${from}` : ""}${date ? `｜${date}` : ""}`;
+}
+
+export function rankedPersonalMessages(messages) {
+  return messages
+    .map((message) => ({ message, classification: classifyPersonalMessage(message) }))
+    .sort((a, b) => {
+      if (a.classification.rank !== b.classification.rank) return a.classification.rank - b.classification.rank;
+      return messageDateMs(b.message) - messageDateMs(a.message);
+    });
 }
