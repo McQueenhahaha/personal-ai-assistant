@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 import { collectMailDrops } from "./mail-drop.mjs";
 import { envList, envNumber, loadEnv, resolveFromCwd, timestampForFile } from "./env.mjs";
 import { fetchGameNews } from "./rss.mjs";
@@ -81,7 +82,7 @@ function saveState(state) {
   fs.writeFileSync(file, JSON.stringify(state, null, 2), "utf8");
 }
 
-function zonedParts(date, timeZone) {
+export function zonedParts(date, timeZone) {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone,
     year: "numeric",
@@ -104,17 +105,17 @@ function zonedParts(date, timeZone) {
   };
 }
 
-function dateKeyInZone(date, timeZone) {
+export function dateKeyInZone(date, timeZone) {
   const parts = zonedParts(date, timeZone);
   return `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
 }
 
-function minutesInZone(date, timeZone) {
+export function minutesInZone(date, timeZone) {
   const parts = zonedParts(date, timeZone);
   return parts.hour * 60 + parts.minute;
 }
 
-function parseClock(value) {
+export function parseClock(value) {
   const match = value.match(/^(\d{1,2}):(\d{2})$/);
   if (!match) return null;
   const hour = Number(match[1]);
@@ -123,7 +124,7 @@ function parseClock(value) {
   return { hour, minute, total: hour * 60 + minute, label: `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}` };
 }
 
-function dueSlots({ now, timeZone, times, graceMinutes, state }) {
+export function dueSlots({ now, timeZone, times, graceMinutes, state }) {
   const today = dateKeyInZone(now, timeZone);
   const current = minutesInZone(now, timeZone);
   const due = [];
@@ -198,7 +199,7 @@ function runGmailExport({ maxMessages, query, account }) {
   return (result.stdout || "").trim();
 }
 
-function parseField(block, name) {
+export function parseField(block, name) {
   const match = block.match(new RegExp(`^- ${name}:\\s*(.+)$`, "im"));
   return match ? match[1].trim() : "";
 }
@@ -324,17 +325,17 @@ function personalMessagesFromDrops(maxFiles) {
     .sort((a, b) => String(b.date).localeCompare(String(a.date)));
 }
 
-function compactLine(value) {
+export function compactLine(value) {
   return String(value || "")
     .replace(/\s+/g, " ")
     .trim();
 }
 
-function gameKey(item) {
+export function gameKey(item) {
   return `${item.game || "game"}|${item.title}|${item.link || ""}`.toLowerCase();
 }
 
-function countGameSources(items) {
+export function countGameSources(items) {
   const counts = {};
   for (const item of items) {
     const key = `${item.game || "unknown"}:${item.sourceType || "unknown"}`;
@@ -343,7 +344,7 @@ function countGameSources(items) {
   return counts;
 }
 
-function translateGameTitle(title) {
+export function translateGameTitle(title) {
   return String(title || "")
     .replace(/\s+-\s+Bilibili$/i, "")
     .replace(/\s+-\s+[^-]+$/g, "")
@@ -363,7 +364,7 @@ function translateGameTitle(title) {
     .trim();
 }
 
-function gamePrefix(item) {
+export function gamePrefix(item) {
   if (item.sourceType === "tarkov-official") return "塔科夫官方";
   if (item.sourceType === "tarkov-bilibili") return "塔科夫/B站纱雾";
   if (item.game === "WARNO") return "WARNO 官方";
@@ -396,7 +397,7 @@ function formatGameSummary(items, { slotLabel, timeZone }) {
   return lines.join("\n");
 }
 
-function classifySchoolMessage(message) {
+export function classifySchoolMessage(message) {
   const subject = String(message.subject || "").toLowerCase();
   const text = `${message.subject}\n${message.body}`.toLowerCase();
   if (/\bces\b|survey|questionnaire|complete your .*feedback|give your feedback/.test(subject)) return "问卷/反馈";
@@ -408,7 +409,7 @@ function classifySchoolMessage(message) {
   return "通知";
 }
 
-function classifyPersonalMessage(message) {
+export function classifyPersonalMessage(message) {
   const text = `${message.subject}\n${message.from}\n${message.labels || ""}`.toLowerCase();
 
   if (/security alert|2-step|verification|password|sign-?in|account/.test(text)) {
@@ -436,7 +437,7 @@ function classifyPersonalMessage(message) {
   return { kind: "个人邮件", important: true };
 }
 
-function translatePersonalSubject(subject) {
+export function translatePersonalSubject(subject) {
   return String(subject || "")
     .replace(/^Security alert$/i, "Google 安全提醒")
     .replace(/^2-Step Verification turned on$/i, "Google 两步验证已开启")
@@ -449,7 +450,7 @@ function translatePersonalSubject(subject) {
     .trim();
 }
 
-function formatPersonalSummary(messages, { slotLabel, timeZone, skippedLowPriority }) {
+export function formatPersonalSummary(messages, { slotLabel, timeZone, skippedLowPriority }) {
   const lines = [
     `个人 Gmail 检查（墨尔本时间 ${slotLabel || "手动"}）`,
     ""
@@ -478,7 +479,7 @@ function formatPersonalSummary(messages, { slotLabel, timeZone, skippedLowPriori
   return lines.join("\n");
 }
 
-function formatSchoolSummary(messages, { slotLabel, timeZone }) {
+export function formatSchoolSummary(messages, { slotLabel, timeZone }) {
   const lines = [
     `RMIT 学校检查（墨尔本时间 ${slotLabel || "手动"}）`,
     ""
@@ -499,11 +500,11 @@ function formatSchoolSummary(messages, { slotLabel, timeZone }) {
   return lines.join("\n");
 }
 
-function monthNumber(value) {
+export function monthNumber(value) {
   return MONTHS[String(value || "").toLowerCase()];
 }
 
-function to24Hour(hour, meridiem) {
+export function to24Hour(hour, meridiem) {
   let value = Number(hour);
   if (!meridiem) return value;
   const normalized = meridiem.toLowerCase();
@@ -512,7 +513,7 @@ function to24Hour(hour, meridiem) {
   return value;
 }
 
-function localTimeToUtc({ year, month, day, hour, minute }, timeZone) {
+export function localTimeToUtc({ year, month, day, hour, minute }, timeZone) {
   const targetUtcLike = Date.UTC(year, month - 1, day, hour, minute, 0);
   let guess = targetUtcLike;
 
@@ -525,13 +526,13 @@ function localTimeToUtc({ year, month, day, hour, minute }, timeZone) {
   return new Date(guess);
 }
 
-function extractYearFallback(message, now, timeZone) {
+export function extractYearFallback(message, now, timeZone) {
   const fromDate = String(message.date || "").match(/\b(20\d{2})\b/);
   if (fromDate) return Number(fromDate[1]);
   return zonedParts(now, timeZone).year;
 }
 
-function extractDeadlinesFromMessage(message, { now, timeZone }) {
+export function extractDeadlinesFromMessage(message, { now, timeZone }) {
   const text = `${message.subject}\n${message.body}`;
   const deadlines = [];
   const fallbackYear = extractYearFallback(message, now, timeZone);
@@ -575,7 +576,7 @@ function extractDeadlinesFromMessage(message, { now, timeZone }) {
   return deadlines;
 }
 
-function collectDeadlines(messages, { now, timeZone }) {
+export function collectDeadlines(messages, { now, timeZone }) {
   const byKey = new Map();
   for (const message of messages) {
     for (const deadline of extractDeadlinesFromMessage(message, { now, timeZone })) {
@@ -852,13 +853,15 @@ async function main() {
   console.log(JSON.stringify(summary, null, 2));
 }
 
-main().catch(async (error) => {
-  console.error(error.stack || error.message);
-  try {
-    loadEnv();
-    await sendTelegramMessage(`RMIT 学校检查失败：${error.message}`);
-  } catch {
-    // Keep the original failure visible in stderr.
-  }
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  main().catch(async (error) => {
+    console.error(error.stack || error.message);
+    try {
+      loadEnv();
+      await sendTelegramMessage(`RMIT 学校检查失败：${error.message}`);
+    } catch {
+      // Keep the original failure visible in stderr.
+    }
+    process.exitCode = 1;
+  });
+}
