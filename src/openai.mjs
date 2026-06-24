@@ -41,14 +41,14 @@ export function fieldValue(block, name) {
   return match ? match[1].trim() : "";
 }
 
-function readMessageSource(message) {
+export function readMessageSource(message) {
   if (message.file && fs.existsSync(message.file)) {
     return fs.readFileSync(message.file, "utf8");
   }
   return message.body || "";
 }
 
-function parseGmailSnapshot(message) {
+export function parseGmailSnapshot(message) {
   const source = readMessageSource(message);
   const codeBlock = source.match(/```text\r?\n([\s\S]*?)```/);
   const body = codeBlock ? codeBlock[1] : source;
@@ -80,7 +80,7 @@ function parseGmailSnapshot(message) {
   return messages;
 }
 
-function parseOutlookSnapshot(message) {
+export function parseOutlookSnapshot(message) {
   const source = readMessageSource(message);
   if (!source.includes("## ")) return [];
   const messages = [];
@@ -116,7 +116,7 @@ export function messageDateMs(message) {
   return Number.isNaN(date.getTime()) ? 0 : date.getTime();
 }
 
-function normalizeMailMessages(mailMessages) {
+export function normalizeMailMessages(mailMessages) {
   const expanded = [];
 
   for (const message of mailMessages) {
