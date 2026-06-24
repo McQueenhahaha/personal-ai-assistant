@@ -24,20 +24,6 @@ const MAINTENANCE_COMMANDS = {
   "/disk_status": "volume-status",
   "/disk_health": "disk-reliability"
 };
-const TELEGRAM_COMMAND_MENU = [
-  { command: "help", description: "帮助" },
-  { command: "status", description: "助手状态" },
-  { command: "pause", description: "暂停自动检查" },
-  { command: "resume", description: "恢复自动检查" },
-  { command: "maint", description: "手动维护动作" },
-  { command: "defender_status", description: "Defender 状态" },
-  { command: "defender_scan", description: "Defender 快扫" },
-  { command: "sfc_scan", description: "SFC 系统文件修复" },
-  { command: "dism_restore", description: "DISM 修复组件" },
-  { command: "dism_scan", description: "DISM 扫描组件" },
-  { command: "disk_status", description: "磁盘/分区状态" },
-  { command: "disk_health", description: "磁盘可靠性" }
-];
 
 function boolEnv(name, fallback = false) {
   const value = process.env[name];
@@ -161,20 +147,6 @@ function runPowerShell(script, args = [], timeoutMs = 180000) {
     throw new Error(output || `PowerShell command failed with exit ${result.status}`);
   }
   return output || "命令已执行。";
-}
-
-async function registerTelegramCommandMenu(token, dryRun) {
-  if (dryRun) {
-    console.log(`[dry-run setMyCommands] ${TELEGRAM_COMMAND_MENU.map(({ command }) => command).join(", ")}`);
-    return;
-  }
-
-  try {
-    await telegramApi(token, "setMyCommands", { commands: TELEGRAM_COMMAND_MENU });
-    console.log("Telegram command menu registered.");
-  } catch (error) {
-    console.warn(`Telegram command menu registration failed: ${error.message || String(error)}`);
-  }
 }
 
 async function dispatchMaintenance({ token, chatId, action, dryRun }) {
@@ -382,7 +354,6 @@ async function main() {
   const stateFile = resolveFromCwd(process.env.OPENCLAW_TELEGRAM_BRIDGE_STATE_FILE || DEFAULT_STATE_FILE);
   const pollSeconds = envNumber("OPENCLAW_TELEGRAM_BRIDGE_POLL_SECONDS", 3);
 
-  await registerTelegramCommandMenu(token, dryRun);
   console.log("OpenClaw Telegram bridge started.");
   while (true) {
     const handled = await processMessages({ messageFile, stateFile, token, chatId, dryRun, processExisting });
