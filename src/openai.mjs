@@ -1,9 +1,25 @@
 import fs from "node:fs";
 import path from "node:path";
 import { generateWithOllama } from "./local-ai.mjs";
+import { DIGEST_SECTION_LIMIT, REQUIRED_SECTIONS } from "./digest/constants.mjs";
+import { compactLine } from "./digest/text.mjs";
+import { classifyPersonalMessage, formatPersonalItem } from "./digest/personal.mjs";
+import { classifySchoolMessage, formatSchoolItem, translateSchoolTitle } from "./digest/school.mjs";
+import { formatGameItem, gamePrefix, translateGameTitle } from "./digest/games.mjs";
 
-const DIGEST_SECTION_LIMIT = 4;
-const REQUIRED_SECTIONS = ["RMIT / 学校", "个人邮件", "游戏资讯", "待办"];
+export {
+  DIGEST_SECTION_LIMIT,
+  REQUIRED_SECTIONS,
+  compactLine,
+  classifyPersonalMessage,
+  formatPersonalItem,
+  classifySchoolMessage,
+  formatSchoolItem,
+  translateSchoolTitle,
+  formatGameItem,
+  gamePrefix,
+  translateGameTitle
+};
 
 export function outputText(responseJson) {
   if (typeof responseJson.output_text === "string") {
@@ -131,115 +147,6 @@ function normalizeMailMessages(mailMessages) {
   return [...byKey.values()].sort((a, b) => messageDateMs(b) - messageDateMs(a));
 }
 
-export function translateSchoolTitle(title) {
-  return title
-    .replace(/^Recent Canvas notifications$/i, "Canvas 近期通知")
-    .replace(/^Assignment Graded:\s*/i, "作业/测验已评分：")
-    .replace(/^Assignment graded:\s*/i, "作业/测验已评分：")
-    .replace(/^Assignment Due Date Changed:\s*/i, "作业截止日期已更改：")
-    .replace(/^Submission posted:\s*/i, "提交记录已发布：")
-    .replace(/^You have been added to a class team/i, "你已被加入课程 Microsoft Teams")
-    .replace(/^Update:\s*/i, "更新：")
-    .replace(/^Reminder:\s*/i, "提醒：")
-    .replace(/^All engineering students are invited to/i, "工程学生邀请：")
-    .replace(/a STEM social\/industry event on 18 May\s+12-?\s*3pm in Storey Hall/i, "5 月 18 日 12:00-15:00 在 Storey Hall 的 STEM 社交/行业活动")
-    .replace(/^New Colombo Plan Scholarships Opportunities/i, "New Colombo Plan 奖学金机会")
-    .replace(/^Assessment support edition/i, "评估/作业支持专期")
-    .replace(/^Week ten:/i, "第 10 周：")
-    .replace(/^Wrapping up week/i, "本周总结：第")
-    .replace(/\bjust sent you a message in Canvas\b/i, "刚在 Canvas 给你发了消息")
-    .replace(/\bis due tonight\b/i, "今晚截止")
-    .replace(/\bis due on\b/i, "截止于")
-    .replace(/\bFeedback Quiz\b/gi, "反馈测验")
-    .replace(/\bQuiz\b/gi, "测验")
-    .replace(/\bAssignment\b/gi, "作业")
-    .trim();
-}
-
-export function compactLine(value) {
-  return String(value || "").replace(/\s+/g, " ").trim();
-}
-
-export function classifySchoolMessage(message) {
-  const subject = String(message.subject || "").toLowerCase();
-  const text = `${message.subject}\n${message.body || ""}`.toLowerCase();
-  if (/\bces\b|survey|questionnaire|complete your .*feedback|give your feedback/.test(subject)) return "问卷/反馈";
-  if (/graded|feedback|marks?|score/.test(text)) return "成绩/反馈";
-  if (/assignment|quiz|assessment|due|deadline|submission/.test(text)) return "作业/测验";
-  if (/exam|test/.test(text)) return "考试";
-  if (/message for|canvas|lms/.test(text)) return "Canvas";
-  if (/lecture|seminar|event|workshop|social|scholarship|opportunit/.test(subject)) return "课程/活动";
-  return "通知";
-}
-
-export function classifyPersonalMessage(message) {
-  const text = `${message.subject}\n${message.from}\n${message.labels || ""}`.toLowerCase();
-
-  if (/security alert|verification code|2-step|password|sign-?in|logged in|someone signed|verify your device|identity was just linked|third-party .*application/.test(text)) {
-    return {
-      kind: "Urgent",
-      important: true,
-      rank: 0,
-      action: "核对账号安全"
-    };
-  }
-  if (/please review|review and confirm|confirm repayment|completion required|required|please .*sign|direct debit|upcoming payment|claim details|form|questionnaire|complete the survey|action required/.test(text)) {
-    return {
-      kind: "Needs reply",
-      important: true,
-      rank: 1,
-      action: "需要处理/确认"
-    };
-  }
-  if (/application|interview|recruit|residential advisor|seek recommendations|new jobs|job alert/.test(text)) {
-    return {
-      kind: "FYI",
-      important: true,
-      rank: 2,
-      action: "留意求职/机会信息"
-    };
-  }
-  if (/document|academic statement|accounts successfully linked|finalised|receipt|statement|payment receipt|wifi login|rental agreement/.test(text)) {
-    return {
-      kind: "FYI",
-      important: true,
-      rank: 3,
-      action: "留档或查看"
-    };
-  }
-  if (/order confirmation|discount|sale|offer|promotion|uber|yakiniku|machida|afterpay|revolut|epic games|优惠|促销|折扣|订餐|生鲜|最多可省/.test(text)) {
-    return {
-      kind: "Noise",
-      important: false,
-      rank: 9,
-      action: "低优先级"
-    };
-  }
-
-  return {
-    kind: "FYI",
-    important: true,
-    rank: 4,
-    action: "留意"
-  };
-}
-
-export function formatSchoolItem(message) {
-  const kind = classifySchoolMessage(message);
-  const subject = translateSchoolTitle(compactLine(message.subject));
-  const from = compactLine(message.from);
-  const date = compactLine(message.date);
-  return `- [${kind}] ${subject}${from ? `｜${from}` : ""}${date ? `｜${date}` : ""}`;
-}
-
-export function formatPersonalItem(message) {
-  const classification = classifyPersonalMessage(message);
-  const subject = compactLine(message.subject);
-  const from = compactLine(message.from);
-  const date = compactLine(message.date);
-  return `- [${classification.kind}] ${classification.action}：${subject}${from ? `｜${from}` : ""}${date ? `｜${date}` : ""}`;
-}
-
 export function rankedPersonalMessages(messages) {
   return messages
     .map((message) => ({ message, classification: classifyPersonalMessage(message) }))
@@ -282,59 +189,6 @@ export function buildTodoItems({ schoolMessages, personalMessages }) {
     items.push("- 暂无明确待办。");
   }
   return items.slice(0, DIGEST_SECTION_LIMIT);
-}
-
-export function translateGameTitle(title) {
-  return title
-    .replace(/\s+-\s+[^-]+$/g, "")
-    .replace(/^Community Update No\.(\d+):\s*/i, "社区更新第 $1 期：")
-    .replace(/Community Update No\.?(\d+)/i, "社区更新第 $1 期")
-    .replace(/^Development\s+/i, "开发日志：")
-    .replace(/^Event\s+/i, "活动：")
-    .replace(/^Special\s+/i, "特别活动：")
-    .replace(/^Pre-order:\s*/i, "预购：")
-    .replace(/Pre Order/gi, "预购")
-    .replace(/Jean Bart The Last French Battleship/gi, "Jean Bart，最后的法国战列舰")
-    .replace(/Legend Of Victory Kv 8/gi, "胜利传奇 KV-8")
-    .replace(/A Decal Trophy For Us Armed Forces Day/gi, "美国武装部队日贴花奖杯")
-    .replace(/Nuclear Escalation/gi, "核升级")
-    .replace(/Tropic Storm Division #(\d+)/gi, "Tropic Storm 师级预览 #$1")
-    .replace(/TROPIC Division #(\d+)/gi, "Tropic 师级预览 #$1")
-    .replace(/^Monthly Decals/i, "每月贴花")
-    .replace(/^Special:\s*/i, "特别活动：")
-    .replace(/^Event:\s*/i, "活动：")
-    .replace(/^Development:\s*/i, "开发日志：")
-    .replace(/^Fixed! /i, "修复日志：")
-    .replace(/Patch notes/i, "更新说明")
-    .replace(/Major Update/i, "大型更新")
-    .replace(/Sound Mods/i, "声音 Mod")
-    .replace(/More/i, "更多内容")
-    .replace(/discounts?/gi, "折扣")
-    .replace(/trophy/gi, "奖杯/箱子")
-    .replace(/decal/gi, "贴花")
-    .replace(/vehicle event/gi, "载具活动")
-    .replace(/event vehicle/gi, "活动载具")
-    .replace(/rumor round-up/gi, "传闻汇总")
-    .replace(/leaked/gi, "泄露")
-    .trim();
-}
-
-export function gamePrefix(item) {
-  if (item.sourceType === "tarkov-official") return "塔科夫官方";
-  if (item.sourceType === "tarkov-bilibili") return "塔科夫/B站纱雾";
-  if (item.game === "WARNO") return "WARNO 官方";
-  if (item.sourceType === "war-thunder-bilibili") return "战雷/B站 SwordXue";
-  if (item.sourceType === "official-site") return "战雷官方";
-  if (item.sourceType === "google-news" && item.game === "War Thunder") return "战雷论坛/传闻";
-  if (item.game === "Escape from Tarkov") return "塔科夫";
-  return item.game || "游戏";
-}
-
-export function formatGameItem(item) {
-  const title = translateGameTitle(item.title);
-  const source = item.source ? `｜${item.source}` : "";
-  const link = item.link ? `\n  ${item.link}` : "";
-  return `- [${gamePrefix(item)}] ${title}${source}${link}`;
 }
 
 export function buildDeterministicDigest({ title, gameNews, schoolMessages, personalMessages }) {
