@@ -79,7 +79,7 @@ while (Test-Path -LiteralPath $DesiredFlag) {
       Write-WatchLog "检测到游戏，等待当前 Codex 任务完成后再挂起…"
     } else {
       "suspended $(Get-Date -Format o)" | Set-Content -Path $SuspendedFlag -Encoding UTF8
-      Write-WatchLog "Tarkov detected. Suspending assistant runtime."
+      Write-WatchLog "检测到游戏，挂起助手运行时。"
       try {
         & "$PSScriptRoot\stop-assistant-runtime.ps1" *> (Join-Path $LogDir "game-mode-stop-runtime.log")
       } catch {
