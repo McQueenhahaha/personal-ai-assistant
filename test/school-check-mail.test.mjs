@@ -198,22 +198,22 @@ test("school mail drops keep Outlook compatibility, key dedupe, and current stri
 
   const messages = withMailDropEnvAndCwd({ root, schoolDrop, personalDrop }, () => schoolMessagesFromDrops(20));
 
+  // Ordering is now Date.parse timestamp descending, fixing mixed string-date sorting.
   assert.deepEqual(messages, [
     {
       category: "school",
-      file: path.join(schoolDrop, "duplicate-school.eml"),
-      subject: "Assignment 1 due",
-      from: "RMIT Canvas <canvas@example.edu>",
-      date: "Wed, 24 Jun 2026 10:00:00 +1000",
-      modifiedAt: "2026-06-24T00:05:00.000Z",
+      file: path.join(schoolDrop, "empty-subject.eml"),
+      subject: "empty-subject.eml",
+      from: "No Subject <nosubject@example.edu>",
+      date: "Fri, 26 Jun 2026 09:00:00 +1000",
+      modifiedAt: "2026-06-24T00:15:00.000Z",
       body: [
-        "Subject: Assignment 1 due",
-        "From: RMIT Canvas <canvas@example.edu>",
-        "Date: Wed, 24 Jun 2026 10:00:00 +1000",
+        "From: No Subject <nosubject@example.edu>",
+        "Date: Fri, 26 Jun 2026 09:00:00 +1000",
         "",
-        "Duplicate body."
+        "No subject header falls back to filename."
       ].join("\n"),
-      key: "wed, 24 jun 2026 10:00:00 +1000|rmit canvas <canvas@example.edu>|assignment 1 due"
+      key: "fri, 26 jun 2026 09:00:00 +1000|no subject <nosubject@example.edu>|empty-subject.eml"
     },
     {
       category: "school",
@@ -233,18 +233,19 @@ test("school mail drops keep Outlook compatibility, key dedupe, and current stri
     },
     {
       category: "school",
-      file: path.join(schoolDrop, "empty-subject.eml"),
-      subject: "empty-subject.eml",
-      from: "No Subject <nosubject@example.edu>",
-      date: "Fri, 26 Jun 2026 09:00:00 +1000",
-      modifiedAt: "2026-06-24T00:15:00.000Z",
+      file: path.join(schoolDrop, "duplicate-school.eml"),
+      subject: "Assignment 1 due",
+      from: "RMIT Canvas <canvas@example.edu>",
+      date: "Wed, 24 Jun 2026 10:00:00 +1000",
+      modifiedAt: "2026-06-24T00:05:00.000Z",
       body: [
-        "From: No Subject <nosubject@example.edu>",
-        "Date: Fri, 26 Jun 2026 09:00:00 +1000",
+        "Subject: Assignment 1 due",
+        "From: RMIT Canvas <canvas@example.edu>",
+        "Date: Wed, 24 Jun 2026 10:00:00 +1000",
         "",
-        "No subject header falls back to filename."
+        "Duplicate body."
       ].join("\n"),
-      key: "fri, 26 jun 2026 09:00:00 +1000|no subject <nosubject@example.edu>|empty-subject.eml"
+      key: "wed, 24 jun 2026 10:00:00 +1000|rmit canvas <canvas@example.edu>|assignment 1 due"
     },
     {
       category: "school",
@@ -314,6 +315,7 @@ test("personal mail drops keep Gmail compatibility, draft and connector skips, d
 
   const messages = withMailDropEnvAndCwd({ root, schoolDrop, personalDrop }, () => personalMessagesFromDrops(20));
 
+  // Ordering is now Date.parse timestamp descending, fixing mixed string-date sorting.
   assert.deepEqual(messages, [
     {
       category: "personal",

@@ -60,7 +60,11 @@ export function schoolMessagesFromDrops(maxFiles) {
 
   return [...byKey.values()]
     .filter((message) => message.subject && !message.subject.startsWith("Could not read"))
-    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    .sort((a, b) => {
+      const ta = Date.parse(a.date) || 0;
+      const tb = Date.parse(b.date) || 0;
+      return tb - ta;
+    });
 }
 
 export function parseGmailSnapshot(file) {
@@ -121,5 +125,9 @@ export function personalMessagesFromDrops(maxFiles) {
 
   return [...byKey.values()]
     .filter((message) => message.subject && !message.subject.startsWith("Could not read"))
-    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    .sort((a, b) => {
+      const ta = Date.parse(a.date) || 0;
+      const tb = Date.parse(b.date) || 0;
+      return tb - ta;
+    });
 }
