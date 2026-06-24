@@ -10,6 +10,7 @@ import { countGameSources, gameKey, gamePrefix, translateGameTitle } from "./sch
 import { parseGmailSnapshot, parseOutlookSnapshot, personalMessagesFromDrops, schoolMessagesFromDrops } from "./school/mail-drops.mjs";
 import { dueSlots } from "./school/schedule.mjs";
 import { compactLine, formatPersonalSummary, formatSchoolSummary } from "./school/summaries.mjs";
+import { loadState, saveState, statePath } from "./school/state.mjs";
 import { sendTelegramMessage } from "./telegram.mjs";
 
 export { zonedParts, dateKeyInZone, minutesInZone, parseClock, dueSlots } from "./school/schedule.mjs";
@@ -18,54 +19,12 @@ export { MONTHS, monthNumber, to24Hour, localTimeToUtc, extractYearFallback, ext
 export { gameKey, countGameSources, translateGameTitle, gamePrefix } from "./school/game-news.mjs";
 export { parseGmailSnapshot, parseOutlookSnapshot, personalMessagesFromDrops, schoolMessagesFromDrops };
 export { compactLine, parseField, formatSchoolSummary, formatPersonalSummary } from "./school/summaries.mjs";
+export { loadState, saveState, statePath };
 
 const DEFAULT_TIME_ZONE = "Australia/Melbourne";
 
 function hasArg(name) {
   return process.argv.includes(name);
-}
-
-function statePath() {
-  return resolveFromCwd("./data/state/school-check-state.json");
-}
-
-function loadState() {
-  const file = statePath();
-  if (!fs.existsSync(file)) {
-    return {
-      slots: {},
-      seenMessageKeys: [],
-      seenPersonalKeys: [],
-      seenGameKeys: [],
-      remindedDeadlineKeys: [],
-      schoolCatchup: null,
-      gameCatchup: null
-    };
-  }
-
-  try {
-    return JSON.parse(fs.readFileSync(file, "utf8"));
-  } catch {
-    return {
-      slots: {},
-      seenMessageKeys: [],
-      seenPersonalKeys: [],
-      seenGameKeys: [],
-      remindedDeadlineKeys: [],
-      schoolCatchup: null,
-      gameCatchup: null
-    };
-  }
-}
-
-function saveState(state) {
-  const file = statePath();
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  state.seenMessageKeys = [...new Set(state.seenMessageKeys || [])].slice(-2000);
-  state.seenPersonalKeys = [...new Set(state.seenPersonalKeys || [])].slice(-2000);
-  state.seenGameKeys = [...new Set(state.seenGameKeys || [])].slice(-2000);
-  state.remindedDeadlineKeys = [...new Set(state.remindedDeadlineKeys || [])].slice(-1000);
-  fs.writeFileSync(file, JSON.stringify(state, null, 2), "utf8");
 }
 
 function runOutlookExport({ days, maxMessages, syncWaitSeconds }) {
