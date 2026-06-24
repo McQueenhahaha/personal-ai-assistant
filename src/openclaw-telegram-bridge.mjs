@@ -3,6 +3,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { createTask, ensureQueue, listPendingTasks } from "./queue.mjs";
 import { envNumber, loadEnv, projectRoot, resolveFromCwd } from "./env.mjs";
+import { OWNER_COMMAND_MENU } from "./openclaw/command-menu.mjs";
 
 const DEFAULT_MESSAGE_FILE = "./.openclaw/state/agents/main/sessions/sessions.json.telegram-messages.json";
 const DEFAULT_STATE_FILE = "./data/state/openclaw-telegram-bridge-state.json";
@@ -147,6 +148,22 @@ function runPowerShell(script, args = [], timeoutMs = 180000) {
     throw new Error(output || `PowerShell command failed with exit ${result.status}`);
   }
   return output || "命令已执行。";
+}
+
+async function registerOwnerCommandMenu(token, chatId, dryRun) {
+  if (dryRun) {
+    console.log(`[dry-run setMyCommands chat ${chatId}] ${OWNER_COMMAND_MENU.map(({ command }) => command).join(", ")}`);
+    return;
+  }
+  try {
+    await telegramApi(token, "setMyCommands", {
+      scope: { type: "chat", chat_id: Number(chatId) },
+      commands: OWNER_COMMAND_MENU
+    });
+    console.log("Owner Telegram command menu registered (chat scope).");
+  } catch (error) {
+    console.warn(`Owner command menu registration failed: ${error.message || String(error)}`);
+  }
 }
 
 async function dispatchMaintenance({ token, chatId, action, dryRun }) {
@@ -354,6 +371,7 @@ async function main() {
   const stateFile = resolveFromCwd(process.env.OPENCLAW_TELEGRAM_BRIDGE_STATE_FILE || DEFAULT_STATE_FILE);
   const pollSeconds = envNumber("OPENCLAW_TELEGRAM_BRIDGE_POLL_SECONDS", 3);
 
+  await registerOwnerCommandMenu(token, chatId, dryRun);
   console.log("OpenClaw Telegram bridge started.");
   while (true) {
     const handled = await processMessages({ messageFile, stateFile, token, chatId, dryRun, processExisting });
