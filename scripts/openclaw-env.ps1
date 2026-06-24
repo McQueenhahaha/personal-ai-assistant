@@ -10,6 +10,39 @@ $TempDir = Join-Path $ProjectRoot "data\tmp"
 $AppDataDir = Join-Path $ProjectRoot "data\appdata"
 $NpmCache = Join-Path $AppDataDir "npm-cache"
 $PythonUserRoot = Join-Path $AppDataDir "Python"
+$EnvFile = Join-Path $ProjectRoot ".env"
+
+if (Test-Path -Path $EnvFile) {
+  foreach ($rawLine in Get-Content -Path $EnvFile -Encoding UTF8) {
+    $line = $rawLine.Trim()
+    if (-not $line -or $line.StartsWith("#")) {
+      continue
+    }
+
+    $normalized = $line
+    if ($normalized.StartsWith("export ")) {
+      $normalized = $normalized.Substring(7).Trim()
+    }
+
+    $eq = $normalized.IndexOf("=")
+    if ($eq -le 0) {
+      continue
+    }
+
+    $key = $normalized.Substring(0, $eq).Trim()
+    $value = $normalized.Substring($eq + 1).Trim()
+    if ($value.Length -ge 2 -and (
+        ($value.StartsWith('"') -and $value.EndsWith('"')) -or
+        ($value.StartsWith("'") -and $value.EndsWith("'"))
+      )) {
+      $value = $value.Substring(1, $value.Length - 2)
+    }
+
+    if (-not (Test-Path "Env:$key")) {
+      Set-Item "Env:$key" $value
+    }
+  }
+}
 
 if (-not (Test-Path -Path $OpenClawHome)) {
   New-Item -ItemType Directory -Force -Path $OpenClawHome | Out-Null
