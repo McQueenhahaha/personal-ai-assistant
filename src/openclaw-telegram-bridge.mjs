@@ -249,8 +249,19 @@ async function handleCommand({ token, chatId, text, dryRun }) {
       "/mail - 立即检查 Gmail",
       "/game - 立即检查游戏资讯",
       "/digest - 发送综合摘要",
+      "/due - 查看近期作业 due",
       "/pause /resume - 暂停/恢复自动摘要和检查"
     ].join("\n"), dryRun);
+    return true;
+  }
+
+  if (command === "/due") {
+    try {
+      const { runCanvasDue } = await import("./canvas-check.mjs");
+      await send(token, chatId, await runCanvasDue(), dryRun);
+    } catch {
+      await send(token, chatId, "查询 Canvas 失败", dryRun);
+    }
     return true;
   }
 
