@@ -3,7 +3,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { loadEnv, projectRoot, resolveFromCwd, timestampForFile } from "./env.mjs";
-import { runClaudeText } from "./brain/claude.mjs";
+import { runClaudeChat } from "./brain/claude.mjs";
 import { claimTask, ensureQueue, listPendingTasks, readTask, writeFailure, writeResult } from "./queue.mjs";
 import { sendTelegramMessage } from "./telegram.mjs";
 
@@ -373,7 +373,7 @@ export async function processCodexAutoQueue({ notify = true } = {}) {
         const notifyStatusUpdates = boolEnv("CODEX_AUTO_STATUS_UPDATES", true);
         const taskStem = path.basename(claimed).replace(/\.[^.]+$/, "");
         const execution = isChat
-          ? { result: await runClaudeText(buildPrompt(task, root)) }
+          ? { result: await runClaudeChat(buildPrompt(task, root)) }
           : await runCodexExec({
             root,
             prompt: buildPrompt(task, root),

@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
 
 function trimError(text, maxLength = 300) {
   const clean = String(text || "").replace(/\s+/g, " ").trim();
@@ -32,6 +35,8 @@ export async function runClaudeText(prompt, opts = {}) {
   const {
     cliPath = process.env.CLAUDE_BRAIN_CMD || "claude",
     model = process.env.CLAUDE_BRAIN_MODEL || "",
+    sessionId = "",
+    resume = false,
     timeoutMs = 120000
   } = opts;
   const args = [
@@ -44,6 +49,9 @@ export async function runClaudeText(prompt, opts = {}) {
 
   if (model) {
     args.push("--model", model);
+  }
+  if (sessionId) {
+    args.push(...(resume ? ["--resume", sessionId] : ["--session-id", sessionId]));
   }
 
   return new Promise((resolve, reject) => {
@@ -100,4 +108,52 @@ export async function runClaudeText(prompt, opts = {}) {
 
     child.stdin.end(String(prompt ?? ""), "utf8");
   });
+}
+
+export function shouldResetChatSession(state, nowMs, idleMs) {
+  if (!state?.sessionId) return true;
+  return nowMs - state.lastAtMs >= idleMs;
+}
+
+async function readChatSessionState(stateFile) {
+  try {
+    return JSON.parse(await fs.readFile(stateFile, "utf8"));
+  } catch (error) {
+    if (error?.code === "ENOENT" || error instanceof SyntaxError) return null;
+    throw error;
+  }
+}
+
+async function writeChatSessionState(stateFile, state) {
+  await fs.mkdir(path.dirname(stateFile), { recursive: true });
+  await fs.writeFile(stateFile, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+}
+
+export async function runClaudeChat(prompt, opts = {}) {
+  const {
+    nowMs = Date.now(),
+    stateFile = process.env.CHAT_SESSION_FILE || "./data/state/telegram-chat-session.json",
+    idleMs = (Number(process.env.CHAT_SESSION_IDLE_MINUTES) > 0 ? Number(process.env.CHAT_SESSION_IDLE_MINUTES) : 30) * 60000,
+    cliPath,
+    model,
+    timeoutMs
+  } = opts;
+
+  const state = await readChatSessionState(stateFile);
+  const reset = shouldResetChatSession(state, nowMs, idleMs);
+  let sessionId = reset ? randomUUID() : state.sessionId;
+  let resume = !reset;
+  let result;
+
+  try {
+    result = await runClaudeText(prompt, { cliPath, model, timeoutMs, sessionId, resume });
+  } catch (error) {
+    if (!resume) throw error;
+    sessionId = randomUUID();
+    resume = false;
+    result = await runClaudeText(prompt, { cliPath, model, timeoutMs, sessionId, resume });
+  }
+
+  await writeChatSessionState(stateFile, { sessionId, lastAtMs: nowMs });
+  return result;
 }
