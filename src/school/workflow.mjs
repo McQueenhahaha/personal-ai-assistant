@@ -19,6 +19,13 @@ function hasArg(name) {
   return process.argv.includes(name);
 }
 
+export function outlookExportThrottled(lastExportIso, nowMs, minMinutes) {
+  if (!lastExportIso) return false;
+  const last = new Date(lastExportIso).getTime();
+  if (!Number.isFinite(last)) return false;
+  return (nowMs - last) < minMinutes * 60000;
+}
+
 export function formatGameSummary(items, { slotLabel, timeZone, maxItems = 8 }) {
   const lines = [
     `游戏资讯检查（墨尔本时间 ${slotLabel || "手动"}）`,
@@ -63,6 +70,7 @@ export async function runSchoolCheckCli() {
   const exportDays = envNumber("SCHOOL_EXPORT_DAYS", 14);
   const exportMaxMessages = envNumber("SCHOOL_EXPORT_MAX_MESSAGES", 60);
   const outlookSyncWaitSeconds = envNumber("OUTLOOK_SYNC_WAIT_SECONDS", 45);
+  const outlookMinMinutes = envNumber("OUTLOOK_MIN_EXPORT_MINUTES", 30);
   const gmailExportMaxMessages = envNumber("GMAIL_EXPORT_MAX_MESSAGES", 30);
   const gmailExportQuery = process.env.GMAIL_EXPORT_QUERY || "in:inbox newer_than:7d -category:promotions -category:social -in:drafts";
   const gmailAccount = process.env.GOG_ACCOUNT || "";
@@ -79,6 +87,7 @@ export async function runSchoolCheckCli() {
   state.remindedDeadlineKeys ||= [];
   state.schoolCatchup ||= null;
   state.gameCatchup ||= null;
+  state.lastOutlookExportAt ||= null;
 
   const slots = dueSlots({ now, timeZone, times, graceMinutes, state });
   const activeSchoolCatchup = state.schoolCatchup?.until && new Date(state.schoolCatchup.until) > now
@@ -95,12 +104,14 @@ export async function runSchoolCheckCli() {
   }
 
   const shouldExport = forceSchool || slots.length > 0 || Boolean(activeSchoolCatchup);
+  const throttleOutlook = !forceSchool && outlookExportThrottled(state.lastOutlookExportAt, now.getTime(), outlookMinMinutes);
   let exportOutput = "";
   let telegramMessagesSent = 0;
   let emptyCheckSent = false;
 
-  if (shouldExport && !checkOnly) {
+  if (shouldExport && !checkOnly && !throttleOutlook) {
     exportOutput = runOutlookExport({ days: exportDays, maxMessages: exportMaxMessages, syncWaitSeconds: outlookSyncWaitSeconds });
+    state.lastOutlookExportAt = now.toISOString();
     console.log(exportOutput);
   }
 
