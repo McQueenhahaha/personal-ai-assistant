@@ -1,14 +1,16 @@
-param(
+﻿param(
   [int]$Days = 7,
   [int]$MaxMessages = 40,
   [string]$AccountContains = "rmit.edu.au",
   [string]$OutDir,
   [int]$SyncWaitSeconds = 45,
-  [switch]$NoSync
+  [switch]$NoSync,
+  [string]$ProfileName = ""
 )
 
 $ErrorActionPreference = "Stop"
 . "$PSScriptRoot\openclaw-env.ps1"
+$env:APPDATA = [Environment]::GetFolderPath("ApplicationData")
 
 $Root = Split-Path -Parent $PSScriptRoot
 if ([string]::IsNullOrWhiteSpace($OutDir)) {
@@ -60,6 +62,17 @@ function Start-OutlookSync {
 
 $outlook = New-Object -ComObject Outlook.Application
 $namespace = $outlook.GetNamespace("MAPI")
+$profileToUse = $ProfileName
+if ([string]::IsNullOrWhiteSpace($profileToUse)) {
+  $profileToUse = (Get-ItemProperty "HKCU:\Software\Microsoft\Office\16.0\Outlook" -Name DefaultProfile -ErrorAction SilentlyContinue).DefaultProfile
+}
+if ([string]::IsNullOrWhiteSpace($profileToUse)) { $profileToUse = "Outlook" }
+
+try {
+  $namespace.Logon($profileToUse, "", $false, $true)
+} catch {
+  Write-Warning "Outlook profile logon skipped: $($_.Exception.Message)"
+}
 if (-not $NoSync) {
   Start-OutlookSync -Namespace $namespace -WaitSeconds $SyncWaitSeconds
 }
