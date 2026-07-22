@@ -27,3 +27,17 @@ test("buildPrompt keeps maintenance prompt for remote maintenance tasks", () => 
 
   assert.equal(prompt.includes("请自动完成任务"), true);
 });
+
+test("buildPrompt creates an engineering study document prompt", () => {
+  const prompt = buildPrompt({
+    taskType: "study-distill",
+    prompt: "断裂力学",
+    title: "t",
+    priority: "high",
+    source: "s"
+  });
+
+  assert.equal(prompt.includes("航空工程"), true);
+  assert.equal(prompt.includes("自测题"), true);
+  assert.equal(prompt.includes("断裂力学"), true);
+});

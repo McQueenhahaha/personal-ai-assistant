@@ -242,6 +242,7 @@ async function handleCommand({ token, chatId, text, dryRun }) {
       "可用命令：",
       "/status - 查看助手状态",
       "/codex <任务> - 让 Codex 修改/维护本项目",
+      "/study <主题> - 蒸馏课程主题，生成学习文档",
       "/local <任务> - 交给本地 Ollama 队列",
       "/maint <动作> - 派发管理员维护任务",
       "也可以点左下角 Menu 按钮选择维护命令。",
@@ -312,6 +313,23 @@ async function handleCommand({ token, chatId, text, dryRun }) {
     }
     const file = createRemoteCodexTask(rest);
     await send(token, chatId, `Codex 远程任务已入队。\n\n${path.basename(file)}\n\n本地检测器会提醒 Codex 介入处理。`, dryRun);
+    return true;
+  }
+
+  if (command === "/study") {
+    if (!rest) {
+      await send(token, chatId, "用法：/study 课程/主题，例如：/study MIET2115 断裂力学 应力强度因子没听懂", dryRun);
+      return true;
+    }
+    createTask({
+      inboxPath: process.env.CODEX_QUEUE_INBOX || "./data/queues/codex/inbox",
+      title: rest.slice(0, 60) || "课程蒸馏",
+      prompt: rest,
+      taskType: "study-distill",
+      source: "openclaw-telegram-bridge",
+      priority: "high"
+    });
+    await send(token, chatId, `📚 收到，开始蒸馏《${rest.slice(0, 40)}》。完成后把学习文档发给你（通常几分钟）。`, dryRun);
     return true;
   }
 

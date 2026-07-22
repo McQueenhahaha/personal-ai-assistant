@@ -3,9 +3,9 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { loadEnv, projectRoot, resolveFromCwd, timestampForFile } from "./env.mjs";
-import { runClaudeChat } from "./brain/claude.mjs";
+import { runClaudeChat, runClaudeText } from "./brain/claude.mjs";
 import { claimTask, ensureQueue, listPendingTasks, readTask, writeFailure, writeResult } from "./queue.mjs";
-import { sendTelegramMessage } from "./telegram.mjs";
+import { sendTelegramDocument, sendTelegramMessage } from "./telegram.mjs";
 
 function envNumber(name, fallback) {
   const value = Number(process.env[name]);
@@ -23,6 +23,20 @@ function codexEntrypoint(root) {
 }
 
 export function buildPrompt(task, root = projectRoot()) {
+  if (task.taskType === "study-distill") {
+    return [
+      "你是一位擅长把大学工程课程讲透的老师。用户是 RMIT 航空工程本科生，下面是他没听懂的课程主题。",
+      "请生成一份 Markdown 学习文档，要求：",
+      "- 简体中文讲解，专业术语保留英文原文（首次出现时标注）",
+      "- 结构：# 主题 / ## 核心概念（直觉优先，先讲为什么再讲是什么） / ## 关键公式与推导（逐步，标注每步物理意义） / ## 典型例题（2-3 道，完整解题过程） / ## 常见误区 / ## 自测题（5 道，答案附文末）",
+      "- 深度面向本科课程考试，不要浅尝辄止；公式用 LaTeX 记法",
+      "- 直接输出 Markdown 正文，不要任何开场白或结尾客套",
+      "",
+      "课程主题：",
+      task.prompt
+    ].join("\n");
+  }
+
   if (task.taskType === "telegram-chat") {
     return [
       "你在回答用户通过 Telegram 发来的提问或闲聊，用简体中文、简洁、口语化回答。",
@@ -367,26 +381,35 @@ export async function processCodexAutoQueue({ notify = true } = {}) {
       try {
         task = readTask(claimed);
         const isChat = task.taskType === "telegram-chat";
-        if (notify && task.taskType !== "telegram-chat") {
+        const isStudy = task.taskType === "study-distill";
+        if (notify && !isChat && !isStudy) {
           await sendTelegramMessage(`Codex 任务已开始：${task.title}\n状态：已领取到 processing，正在启动 Codex。`);
         }
         const notifyStatusUpdates = boolEnv("CODEX_AUTO_STATUS_UPDATES", true);
         const taskStem = path.basename(claimed).replace(/\.[^.]+$/, "");
-        const execution = isChat
-          ? { result: await runClaudeChat(buildPrompt(task, root)) }
+        const execution = isStudy
+          ? { result: await runClaudeText(buildPrompt(task, root), { timeoutMs: 600000 }) }
+          : isChat
+            ? { result: await runClaudeChat(buildPrompt(task, root)) }
           : await runCodexExec({
             root,
             prompt: buildPrompt(task, root),
             taskStem,
             onProgress: async ({ elapsedSeconds, jsonLogFile }) => {
-              if (notify && notifyStatusUpdates && task.taskType !== "telegram-chat") {
+              if (notify && notifyStatusUpdates && !isChat && !isStudy) {
                 await sendTelegramMessage(buildProgressMessage({ task, elapsedSeconds, jsonLogFile }));
               }
             }
           });
         const outFile = writeResult({ inboxPath, taskFile: claimed, task, result: execution.result });
         results.push({ ok: true, task, outFile, log: execution.jsonLogFile });
-        if (notify && isChat) {
+        if (notify && isStudy) {
+          const studyDir = path.join(root, "data", "study");
+          fs.mkdirSync(studyDir, { recursive: true });
+          const studyFile = path.join(studyDir, `study-${timestampForFile()}.md`);
+          fs.writeFileSync(studyFile, execution.result, "utf8");
+          await sendTelegramDocument(studyFile, `📚 学习文档：${task.title}`);
+        } else if (notify && isChat) {
           await sendTelegramMessage(execution.result);
         } else if (notify) {
           await sendTelegramMessage(`Codex 自动任务完成：${task.title}\n\n${execution.result}`);
@@ -394,7 +417,9 @@ export async function processCodexAutoQueue({ notify = true } = {}) {
       } catch (error) {
         const outFile = writeFailure({ inboxPath, taskFile: claimed, task, error });
         results.push({ ok: false, task, outFile, error });
-        if (notify && task?.taskType === "telegram-chat") {
+        if (notify && task?.taskType === "study-distill") {
+          await sendTelegramMessage(`蒸馏失败：${error.message || String(error)}`);
+        } else if (notify && task?.taskType === "telegram-chat") {
           await sendTelegramMessage(`回答失败：${error.message || String(error)}`);
         } else if (notify) {
           await sendTelegramMessage(`Codex 自动任务失败：${task?.title || item.name}\n\n${error.message || String(error)}`);

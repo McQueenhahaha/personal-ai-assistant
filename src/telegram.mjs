@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+
 const TELEGRAM_LIMIT = 3900;
 
 function splitMessage(text) {
@@ -44,6 +47,33 @@ export async function sendTelegramMessage(text) {
       const body = await response.text();
       throw new Error(`Telegram send failed ${response.status}: ${body}`);
     }
+  }
+
+  return { sent: true };
+}
+
+export async function sendTelegramDocument(filePath, caption = "") {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID;
+
+  if (!token || !chatId) {
+    console.log("Telegram token/chat ID missing. Document not sent.");
+    return { sent: false, reason: "missing Telegram config" };
+  }
+
+  const form = new FormData();
+  form.append("chat_id", chatId);
+  if (caption) form.append("caption", caption.slice(0, 1000));
+  form.append("document", new Blob([fs.readFileSync(filePath)]), path.basename(filePath));
+
+  const response = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
+    method: "POST",
+    body: form
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Telegram document send failed ${response.status}: ${body}`);
   }
 
   return { sent: true };
