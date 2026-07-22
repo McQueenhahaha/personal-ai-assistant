@@ -88,3 +88,12 @@ Outlook 快照同理由卫星推给大脑。细节在 P5.3 出规格。
 - 默认身体仍是树莓派（24/7 最稳）；Windows 是"能力最强的身体"（Outlook/游戏/codex
   仍只有它能干——这些是身体特有技能，注册为 capability，大脑派活时按 capability 路由）。
 - 顺序：P5.2 派上线（第一具常开身体）→ P5.5 状态包+租约+become-brain（Codex 分片实现）。
+
+### P5.5 修订（2026-07-23）：Mac 定位升级为"技能卫星"
+
+用户实测 **Mac 上 Codex 的电脑控制(computer-use)明显更强**——这是 Mac 独有 capability。
+修订：Mac 不再只是"随身查看端"，而是与 Windows 同模式的**卫星身体**：
+- capability: `codex-computer-use`（浏览器/桌面自动化类任务）、mac 自动化
+- 大脑按任务所需 capability 路由到在线且具备该能力的身体（Windows=Outlook/游戏/维护，
+  Mac=电脑控制，派=常开兜底与纯网络活）
+- Mac 仍默认不当大脑（可 become-brain 应急接管）；卫星 agent 与 P5.3 同一套 puller 协议。
