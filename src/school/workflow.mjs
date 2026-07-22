@@ -26,6 +26,14 @@ export function outlookExportThrottled(lastExportIso, nowMs, minMinutes) {
   return (nowMs - last) < minMinutes * 60000;
 }
 
+export function shouldAlertGmailFailure(streak, lastAlertIso, nowMs, minStreak = 3, cooldownMs = 24 * 3600000) {
+  if (streak < minStreak) return false;
+  if (!lastAlertIso) return true;
+  const last = new Date(lastAlertIso).getTime();
+  if (!Number.isFinite(last)) return true;
+  return (nowMs - last) >= cooldownMs;
+}
+
 export function formatGameSummary(items, { slotLabel, timeZone, maxItems = 8 }) {
   const lines = [
     `游戏资讯检查（墨尔本时间 ${slotLabel || "手动"}）`,
@@ -88,6 +96,8 @@ export async function runSchoolCheckCli() {
   state.schoolCatchup ||= null;
   state.gameCatchup ||= null;
   state.lastOutlookExportAt ||= null;
+  state.gmailFailStreak ||= 0;
+  state.lastGmailAuthAlertAt ||= null;
 
   const slots = dueSlots({ now, timeZone, times, graceMinutes, state });
   const activeSchoolCatchup = state.schoolCatchup?.until && new Date(state.schoolCatchup.until) > now
@@ -134,6 +144,18 @@ export async function runSchoolCheckCli() {
         personalExportError = error.message || String(error);
         console.warn(`Gmail export skipped: ${personalExportError}`);
       }
+
+      if (personalExportError) {
+        state.gmailFailStreak += 1;
+      } else {
+        state.gmailFailStreak = 0;
+      }
+    }
+
+    if (personalExportError && shouldAlertGmailFailure(state.gmailFailStreak, state.lastGmailAuthAlertAt, now.getTime())) {
+      await sendOrPrint(`⚠️ Gmail 邮件读取连续失败（可能授权过期）。\n请在电脑上用 PowerShell 运行（必须带项目环境）：\ncd D:\\AI\\personal-ai-assistant; . .\\scripts\\openclaw-env.ps1; & \"D:\\AI\\gogcli\\gog.exe\" auth add <your-gmail>@gmail.com\n\n错误：${personalExportError.slice(0, 200)}`, dryRun);
+      telegramMessagesSent += 1;
+      state.lastGmailAuthAlertAt = now.toISOString();
     }
 
     personalMessages = personalMessagesFromDrops(maxFiles);
