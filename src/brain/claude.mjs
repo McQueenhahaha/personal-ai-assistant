@@ -2,6 +2,11 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { projectRoot } from "../env.mjs";
+
+const ASSIST_SYSTEM_PROMPT = "你在帮用户远程完成任务。可以读文件、搜索、运行只读命令。不要做不可逆操作（删除、发送、付款、改系统设置）；需要这些时，说明原因并建议用户改用 /codex。";
+const ASSIST_TOOLS = "Read,Grep,Glob,Bash";
+const ASSIST_DISALLOWED_TOOLS = "Write,Edit,NotebookEdit,WebFetch";
 
 function trimError(text, maxLength = 300) {
   const clean = String(text || "").replace(/\s+/g, " ").trim();
@@ -37,15 +42,34 @@ export async function runClaudeText(prompt, opts = {}) {
     model = process.env.CLAUDE_BRAIN_MODEL || "",
     sessionId = "",
     resume = false,
-    timeoutMs = 120000
+    timeoutMs = 120000,
+    capability = "answer-only"
   } = opts;
   const args = [
     "-p",
     "--output-format",
-    "text",
-    "--append-system-prompt",
-    "仅用你已有的知识简洁回答用户；不要使用任何工具、不要读写文件或运行命令。"
+    "text"
   ];
+
+  if (capability === "assist") {
+    args.push(
+      "--append-system-prompt",
+      ASSIST_SYSTEM_PROMPT,
+      "--add-dir",
+      projectRoot(),
+      "--permission-mode",
+      "dontAsk",
+      "--tools",
+      ASSIST_TOOLS,
+      "--disallowedTools",
+      ASSIST_DISALLOWED_TOOLS
+    );
+  } else {
+    args.push(
+      "--append-system-prompt",
+      "仅用你已有的知识简洁回答用户；不要使用任何工具、不要读写文件或运行命令。"
+    );
+  }
 
   if (model) {
     args.push("--model", model);
@@ -136,7 +160,8 @@ export async function runClaudeChat(prompt, opts = {}) {
     idleMs = (Number(process.env.CHAT_SESSION_IDLE_MINUTES) > 0 ? Number(process.env.CHAT_SESSION_IDLE_MINUTES) : 30) * 60000,
     cliPath,
     model,
-    timeoutMs
+    timeoutMs,
+    capability = "answer-only"
   } = opts;
 
   const state = await readChatSessionState(stateFile);
@@ -146,12 +171,12 @@ export async function runClaudeChat(prompt, opts = {}) {
   let result;
 
   try {
-    result = await runClaudeText(prompt, { cliPath, model, timeoutMs, sessionId, resume });
+    result = await runClaudeText(prompt, { cliPath, model, timeoutMs, sessionId, resume, capability });
   } catch (error) {
     if (!resume) throw error;
     sessionId = randomUUID();
     resume = false;
-    result = await runClaudeText(prompt, { cliPath, model, timeoutMs, sessionId, resume });
+    result = await runClaudeText(prompt, { cliPath, model, timeoutMs, sessionId, resume, capability });
   }
 
   await writeChatSessionState(stateFile, { sessionId, lastAtMs: nowMs });

@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { loadEnv, projectRoot, resolveFromCwd, timestampForFile } from "./env.mjs";
 import { runClaudeChat, runClaudeText } from "./brain/claude.mjs";
+import { classifyTask, TIER } from "./security/policy.mjs";
 import { claimTask, ensureQueue, listPendingTasks, readTask, writeFailure, writeResult } from "./queue.mjs";
 import { sendTelegramDocument, sendTelegramMessage } from "./telegram.mjs";
 
@@ -387,11 +388,22 @@ export async function processCodexAutoQueue({ notify = true } = {}) {
         }
         const notifyStatusUpdates = boolEnv("CODEX_AUTO_STATUS_UPDATES", true);
         const taskStem = path.basename(claimed).replace(/\.[^.]+$/, "");
-        const execution = isStudy
-          ? { result: await runClaudeText(buildPrompt(task, root), { timeoutMs: 600000 }) }
-          : isChat
-            ? { result: await runClaudeChat(buildPrompt(task, root)) }
-          : await runCodexExec({
+        const classification = isChat ? classifyTask(task.prompt) : null;
+        let execution;
+        if (classification?.tier === TIER.FORBIDDEN) {
+          execution = {
+            result: `这个请求涉及不可逆/高风险操作，我不会执行。原因：${classification.reason}`
+          };
+        } else if (classification?.tier === TIER.PRIVILEGED) {
+          execution = {
+            result: `这需要特权操作（${classification.reason}），A3 确认流上线前请用 /codex 手动下达。`
+          };
+        } else if (isStudy) {
+          execution = { result: await runClaudeText(buildPrompt(task, root), { timeoutMs: 600000 }) };
+        } else if (isChat) {
+          execution = { result: await runClaudeChat(buildPrompt(task, root), { capability: "assist" }) };
+        } else {
+          execution = await runCodexExec({
             root,
             prompt: buildPrompt(task, root),
             taskStem,
@@ -401,6 +413,7 @@ export async function processCodexAutoQueue({ notify = true } = {}) {
               }
             }
           });
+        }
         const outFile = writeResult({ inboxPath, taskFile: claimed, task, result: execution.result });
         results.push({ ok: true, task, outFile, log: execution.jsonLogFile });
         if (notify && isStudy) {
@@ -408,6 +421,9 @@ export async function processCodexAutoQueue({ notify = true } = {}) {
           fs.mkdirSync(studyDir, { recursive: true });
           const studyFile = path.join(studyDir, `study-${timestampForFile()}.md`);
           fs.writeFileSync(studyFile, execution.result, "utf8");
+          for (let offset = 0; offset < execution.result.length; offset += 3500) {
+            await sendTelegramMessage(execution.result.slice(offset, offset + 3500));
+          }
           await sendTelegramDocument(studyFile, `📚 学习文档：${task.title}`);
         } else if (notify && isChat) {
           await sendTelegramMessage(execution.result);
