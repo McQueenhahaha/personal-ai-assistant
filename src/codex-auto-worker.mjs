@@ -4,7 +4,10 @@ import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { loadEnv, projectRoot, resolveFromCwd, timestampForFile } from "./env.mjs";
 import { runClaudeChat, runClaudeText } from "./brain/claude.mjs";
+import { appendAudit } from "./security/audit.mjs";
+import { createApproval } from "./security/pending.mjs";
 import { classifyTask, needsBrowser, TIER } from "./security/policy.mjs";
+import { redactSensitive } from "./security/redact.mjs";
 import { claimTask, ensureQueue, listPendingTasks, readTask, writeFailure, writeResult } from "./queue.mjs";
 import { sendTelegramDocument, sendTelegramMessage } from "./telegram.mjs";
 
@@ -93,23 +96,6 @@ function truncate(text, maxLength = 260) {
   const clean = oneLine(text);
   if (clean.length <= maxLength) return clean;
   return `${clean.slice(0, Math.max(0, maxLength - 3))}...`;
-}
-
-function redactSensitive(text) {
-  return String(text || "")
-    .replace(/\/bot\d+:[A-Za-z0-9_-]+/g, "/bot[REDACTED]")
-    .replace(/\b\d{6,}:[A-Za-z0-9_-]{20,}\b/g, "[TELEGRAM_BOT_TOKEN]")
-    .replace(/\bAIza[0-9A-Za-z_-]{20,}\b/g, "[GOOGLE_API_KEY]")
-    .replace(/\bGOCSPX-[A-Za-z0-9_-]+\b/g, "[GOOGLE_CLIENT_SECRET]")
-    .replace(/\bya29\.[0-9A-Za-z._-]+\b/g, "[GOOGLE_ACCESS_TOKEN]")
-    .replace(/\bsk-[A-Za-z0-9_-]{20,}\b/g, "[OPENAI_API_KEY]")
-    .replace(/\bsk-proj-[A-Za-z0-9_-]{20,}\b/g, "[OPENAI_API_KEY]")
-    .replace(
-      /(\\?"(?:client_secret|refresh_token|access_token|id_token|api_key|token|password|pass|cookie|secret)\\?"\s*:\s*\\?")[^"\\]+(\\?")/gi,
-      "$1[REDACTED]$2"
-    )
-    .replace(/(Authorization:\s*Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, "$1[REDACTED]")
-    .replace(/(TOKEN|KEY|SECRET|PASSWORD|PASS|COOKIE)\s*=\s*["']?[^"'\s;]+/gi, "$1=[REDACTED]");
 }
 
 function summarizeCommand(command) {
@@ -353,6 +339,12 @@ function runCodexExec({ root, prompt, taskStem, onProgress }) {
 export async function processCodexAutoQueue({ notify = true } = {}) {
   loadEnv();
 
+  const pauseFile = resolveFromCwd("./data/state/assistant-paused.flag");
+  if (fs.existsSync(pauseFile)) {
+    console.log("[codex-auto-worker] 已暂停（assistant-paused.flag），跳过本轮任务处理。");
+    return [];
+  }
+
   const root = projectRoot();
   const inboxPath = process.env.CODEX_QUEUE_INBOX || "./data/queues/codex/inbox";
   const maxTasks = envNumber("CODEX_AUTO_MAX_TASKS", 1);
@@ -383,26 +375,70 @@ export async function processCodexAutoQueue({ notify = true } = {}) {
         task = readTask(claimed);
         const isChat = task.taskType === "telegram-chat";
         const isStudy = task.taskType === "study-distill";
-        if (notify && !isChat && !isStudy) {
+        const isApprovedPrivileged = task.taskType === "approved-privileged";
+        const classification = isChat || isApprovedPrivileged ? classifyTask(task.prompt) : null;
+        if (
+          notify &&
+          !isChat &&
+          !isStudy &&
+          !(isApprovedPrivileged && classification?.tier === TIER.FORBIDDEN)
+        ) {
           await sendTelegramMessage(`Codex 任务已开始：${task.title}\n状态：已领取到 processing，正在启动 Codex。`);
         }
         const notifyStatusUpdates = boolEnv("CODEX_AUTO_STATUS_UPDATES", true);
         const taskStem = path.basename(claimed).replace(/\.[^.]+$/, "");
-        const classification = isChat ? classifyTask(task.prompt) : null;
         let execution;
         if (classification?.tier === TIER.FORBIDDEN) {
+          appendAudit({
+            kind: isApprovedPrivileged ? "approved-privileged" : "policy",
+            tier: classification.tier,
+            reason: classification.reason,
+            promptPreview: task.prompt,
+            result: "denied",
+            approvalId: task.metadata?.approvalId
+          });
           execution = {
             result: `这个请求涉及不可逆/高风险操作，我不会执行。原因：${classification.reason}`
           };
-        } else if (classification?.tier === TIER.PRIVILEGED) {
+        } else if (isChat && classification?.tier === TIER.PRIVILEGED) {
+          const approval = createApproval({
+            prompt: task.prompt,
+            tier: classification.tier,
+            reason: classification.reason
+          });
+          const ttlMinutes = Math.ceil((approval.expiresAtMs - approval.createdAtMs) / 60000);
+          const promptPreview = redactSensitive(oneLine(task.prompt)).slice(0, 120);
+          appendAudit({
+            kind: "approval",
+            tier: classification.tier,
+            reason: classification.reason,
+            promptPreview: task.prompt,
+            result: "pending",
+            approvalId: approval.id
+          });
           execution = {
-            result: `这需要特权操作（${classification.reason}），A3 确认流上线前请用 /codex 手动下达。`
+            result: `等待用户确认 ${approval.id}`,
+            notification: [
+              "⚠️ 这个任务需要特权操作，需要你确认。",
+              `原因：${classification.reason}`,
+              `任务：${promptPreview}`,
+              `批准回复：/ok ${approval.id}`,
+              `拒绝回复：/no ${approval.id}`,
+              `（${ttlMinutes} 分钟内有效）`
+            ].join("\n")
           };
         } else if (isStudy) {
           execution = { result: await runClaudeText(buildPrompt(task, root), { timeoutMs: 600000 }) };
         } else if (isChat) {
           const capability = needsBrowser(task.prompt) ? "browse" : "assist";
           execution = { result: await runClaudeChat(buildPrompt(task, root), { capability }) };
+          appendAudit({
+            kind: capability,
+            tier: classification.tier,
+            reason: classification.reason,
+            promptPreview: task.prompt,
+            result: "executed"
+          });
         } else {
           execution = await runCodexExec({
             root,
@@ -414,6 +450,16 @@ export async function processCodexAutoQueue({ notify = true } = {}) {
               }
             }
           });
+          if (isApprovedPrivileged) {
+            appendAudit({
+              kind: "approved-privileged",
+              tier: classification.tier,
+              reason: classification.reason,
+              promptPreview: task.prompt,
+              result: "executed",
+              approvalId: task.metadata?.approvalId
+            });
+          }
         }
         const outFile = writeResult({ inboxPath, taskFile: claimed, task, result: execution.result });
         results.push({ ok: true, task, outFile, log: execution.jsonLogFile });
@@ -427,7 +473,7 @@ export async function processCodexAutoQueue({ notify = true } = {}) {
           }
           await sendTelegramDocument(studyFile, `📚 学习文档：${task.title}`);
         } else if (notify && isChat) {
-          await sendTelegramMessage(execution.result);
+          await sendTelegramMessage(execution.notification || execution.result);
         } else if (notify) {
           await sendTelegramMessage(`Codex 自动任务完成：${task.title}\n\n${execution.result}`);
         }

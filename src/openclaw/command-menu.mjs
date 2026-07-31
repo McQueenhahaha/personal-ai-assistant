@@ -9,6 +9,7 @@ export const OWNER_COMMAND_MENU = [
   { command: "codex", description: "🛠 让电脑端 Codex 改/查本项目（后接任务）" },
   { command: "local", description: "🤖 交给本地模型队列处理（后接任务）" },
   { command: "pause", description: "⏸ 暂停自动摘要与检查" },
+  { command: "stop", description: "🛑 急停所有自动处理并作废待确认任务" },
   { command: "resume", description: "▶️ 恢复自动摘要与检查" },
   { command: "defender_status", description: "🛡 Defender 状态" },
   { command: "defender_scan", description: "🛡 Defender 快速扫描" },

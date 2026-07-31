@@ -4,6 +4,9 @@ import { spawnSync } from "node:child_process";
 import { createTask, ensureQueue, listPendingTasks } from "./queue.mjs";
 import { envNumber, loadEnv, projectRoot, resolveFromCwd } from "./env.mjs";
 import { OWNER_COMMAND_MENU } from "./openclaw/command-menu.mjs";
+import { appendAudit } from "./security/audit.mjs";
+import { isExpired, loadApprovals, resolveApproval, saveApprovals } from "./security/pending.mjs";
+import { classifyTask, TIER } from "./security/policy.mjs";
 
 const DEFAULT_MESSAGE_FILE = "./.openclaw/state/agents/main/sessions/sessions.json.telegram-messages.json";
 const DEFAULT_STATE_FILE = "./data/state/openclaw-telegram-bridge-state.json";
@@ -227,6 +230,20 @@ function createChatTask(text) {
   });
 }
 
+function createApprovedPrivilegedTask(entry) {
+  const file = createTask({
+    inboxPath: process.env.CODEX_QUEUE_INBOX || "./data/queues/codex/inbox",
+    title: entry.prompt.slice(0, 60) || "已批准的特权任务",
+    prompt: entry.prompt,
+    taskType: "approved-privileged",
+    source: "openclaw-telegram-bridge",
+    priority: "high"
+  });
+  const task = JSON.parse(fs.readFileSync(file, "utf8"));
+  writeJson(file, { ...task, approvalId: entry.id });
+  return file;
+}
+
 async function handleFreeText({ token, chatId, text, dryRun }) {
   createChatTask(text);
   await send(token, chatId, "🤔 收到，正在思考，稍等…（由 Claude 回答）", dryRun);
@@ -252,7 +269,10 @@ async function handleCommand({ token, chatId, text, dryRun }) {
       "/game - 立即检查游戏资讯",
       "/digest - 发送综合摘要",
       "/due - 查看近期作业 due",
-      "/pause /resume - 暂停/恢复自动摘要和检查"
+      "/ok <ID> - 批准待确认的特权任务",
+      "/no <ID> - 拒绝待确认的特权任务",
+      "/stop - 急停所有自动处理并作废待确认任务",
+      "/pause /resume - 暂停/恢复自动处理"
     ].join("\n"), dryRun);
     return true;
   }
@@ -272,11 +292,147 @@ async function handleCommand({ token, chatId, text, dryRun }) {
     return true;
   }
 
+  if (command === "/ok") {
+    const id = rest.toUpperCase();
+    if (!/^[A-Z0-9]{6,8}$/.test(id)) {
+      await send(token, chatId, "用法：/ok <确认 ID>", dryRun);
+      return true;
+    }
+    const entry = loadApprovals()[id];
+    if (!entry) {
+      await send(token, chatId, `找不到待确认任务 ${id}。`, dryRun);
+      return true;
+    }
+    if (entry.status !== "pending") {
+      const messages = {
+        approved: "该任务已经批准，不能重复批准。",
+        denied: "该任务已经拒绝。",
+        expired: "该确认已经过期。"
+      };
+      await send(token, chatId, messages[entry.status] || "该任务已经处理。", dryRun);
+      return true;
+    }
+    if (isExpired(entry, Date.now())) {
+      resolveApproval(id, "expired");
+      appendAudit({
+        kind: "approval",
+        tier: entry.tier,
+        reason: entry.reason,
+        promptPreview: entry.prompt,
+        result: "expired",
+        approvalId: id
+      });
+      await send(token, chatId, "该确认已经过期。", dryRun);
+      return true;
+    }
+    const classification = classifyTask(entry.prompt);
+    if (classification.tier === TIER.FORBIDDEN) {
+      resolveApproval(id, "denied");
+      appendAudit({
+        kind: "approval",
+        tier: classification.tier,
+        reason: classification.reason,
+        promptPreview: entry.prompt,
+        result: "denied",
+        approvalId: id
+      });
+      await send(token, chatId, `这个任务命中禁止档，无法执行。原因：${classification.reason}`, dryRun);
+      return true;
+    }
+    resolveApproval(id, "approved");
+    createApprovedPrivilegedTask(entry);
+    appendAudit({
+      kind: "approval",
+      tier: classification.tier,
+      reason: classification.reason,
+      promptPreview: entry.prompt,
+      result: "approved",
+      approvalId: id
+    });
+    await send(token, chatId, "已批准，开始执行。", dryRun);
+    return true;
+  }
+
+  if (command === "/no") {
+    const id = rest.toUpperCase();
+    if (!/^[A-Z0-9]{6,8}$/.test(id)) {
+      await send(token, chatId, "用法：/no <确认 ID>", dryRun);
+      return true;
+    }
+    const entry = loadApprovals()[id];
+    if (!entry) {
+      await send(token, chatId, `找不到待确认任务 ${id}。`, dryRun);
+      return true;
+    }
+    if (entry.status !== "pending") {
+      const messages = {
+        approved: "该任务已经批准。",
+        denied: "该任务已经拒绝。",
+        expired: "该确认已经过期。"
+      };
+      await send(token, chatId, messages[entry.status] || "该任务已经处理。", dryRun);
+      return true;
+    }
+    if (isExpired(entry, Date.now())) {
+      resolveApproval(id, "expired");
+      appendAudit({
+        kind: "approval",
+        tier: entry.tier,
+        reason: entry.reason,
+        promptPreview: entry.prompt,
+        result: "expired",
+        approvalId: id
+      });
+      await send(token, chatId, "该确认已经过期。", dryRun);
+      return true;
+    }
+    resolveApproval(id, "denied");
+    appendAudit({
+      kind: "approval",
+      tier: entry.tier,
+      reason: entry.reason,
+      promptPreview: entry.prompt,
+      result: "denied",
+      approvalId: id
+    });
+    await send(token, chatId, "已拒绝。", dryRun);
+    return true;
+  }
+
   if (command === "/pause") {
     const flagFile = resolveFromCwd("./data/state/assistant-paused.flag");
     fs.mkdirSync(path.dirname(flagFile), { recursive: true });
     fs.writeFileSync(flagFile, `${new Date().toISOString()}\n`, "utf8");
     await send(token, chatId, "已暂停自动摘要/检查。发 /resume 恢复。", dryRun);
+    return true;
+  }
+
+  if (command === "/stop") {
+    const flagFile = resolveFromCwd("./data/state/assistant-paused.flag");
+    fs.mkdirSync(path.dirname(flagFile), { recursive: true });
+    fs.writeFileSync(flagFile, `${new Date().toISOString()}\n`, "utf8");
+    const approvals = loadApprovals();
+    let deniedCount = 0;
+    for (const [id, entry] of Object.entries(approvals)) {
+      if (entry.status !== "pending") continue;
+      approvals[id] = { ...entry, status: "denied" };
+      deniedCount += 1;
+      appendAudit({
+        kind: "stop",
+        tier: entry.tier,
+        reason: entry.reason,
+        promptPreview: entry.prompt,
+        result: "denied",
+        approvalId: id
+      });
+    }
+    saveApprovals(approvals);
+    await send(
+      token,
+      chatId,
+      `🛑 已急停：暂停所有自动处理，已作废 ${deniedCount} 条待确认任务。发 /resume 恢复。`,
+      dryRun
+    );
     return true;
   }
 
