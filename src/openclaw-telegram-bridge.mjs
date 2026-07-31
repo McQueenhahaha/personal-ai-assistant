@@ -259,6 +259,7 @@ async function handleCommand({ token, chatId, text, dryRun }) {
       "可用命令：",
       "/status - 查看助手状态",
       "/web <任务> - 用只读浏览器查看网页",
+      "/screen [说明] - 查看当前电脑屏幕",
       "/codex <任务> - 让 Codex 修改/维护本项目",
       "/study <主题> - 蒸馏课程主题，生成学习文档",
       "/local <任务> - 交给本地 Ollama 队列",
@@ -470,6 +471,13 @@ async function handleCommand({ token, chatId, text, dryRun }) {
     }
     createChatTask(`[web] ${rest}`);
     await send(token, chatId, "🌐 收到，正在用只读浏览器查看…", dryRun);
+    return true;
+  }
+
+  if (command === "/screen") {
+    const request = rest || "查看当前屏幕并说明你看到的内容";
+    createChatTask(`[screen] ${request}`);
+    await send(token, chatId, "🖥 收到，正在查看当前屏幕…", dryRun);
     return true;
   }
 

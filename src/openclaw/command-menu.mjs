@@ -6,6 +6,7 @@ export const OWNER_COMMAND_MENU = [
   { command: "game", description: "🎮 立即检查游戏资讯" },
   { command: "study", description: "📚 蒸馏课程主题，生成学习文档（后接主题）" },
   { command: "web", description: "🌐 用只读浏览器查看网页（后接任务）" },
+  { command: "screen", description: "🖥 查看当前电脑屏幕（可后接说明）" },
   { command: "codex", description: "🛠 让电脑端 Codex 改/查本项目（后接任务）" },
   { command: "local", description: "🤖 交给本地模型队列处理（后接任务）" },
   { command: "pause", description: "⏸ 暂停自动摘要与检查" },

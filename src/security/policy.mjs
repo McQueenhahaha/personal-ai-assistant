@@ -88,8 +88,8 @@ const PRIVILEGED_RULES = [
   {
     reason: "点击鼠标或注入键盘输入",
     patterns: [
-      /点击|点一下|鼠标操作|移动鼠标|键盘注入|模拟按键|按下[^。；;\n]*(?:按键|键|回车)/,
-      /\b(?:click|move\s+the\s+mouse|mouse\s+click|keyboard\s+injection|inject\s+keystrokes?|press\s+(?:the\s+)?(?:key|enter))\b/i
+      /点击|点一下|鼠标操作|移动(?:鼠标|光标)|键盘注入|模拟按键|输入|键入|打字|按(?:下)?[^。；;\n]*(?:按键|键|回车|Enter|Tab|Escape)/i,
+      /\b(?:click|move\s+the\s+(?:mouse|cursor)|mouse\s+click|keyboard\s+injection|inject\s+keystrokes?|press\s+(?:the\s+)?(?:key|enter|tab|escape|esc))\b|^\s*(?:please\s+)?(?:type|enter)\s+\S+|\b(?:type|enter)\b[^.\n]*(?:into|text\s*field|input\s*box)/i
     ]
   }
 ];
@@ -99,11 +99,24 @@ const WRITE_ACTION = /写入|写个|修改|更改|编辑|删除|删掉|创建|�
 const DIRECT_BROWSER_INTENT = /(?:^\s*\[web\]\s*|canvas|b站|哔哩哔哩|bilibili|网页|网站|浏览器|链接|https?:\/\/|登录|\b(?:browse|website|web\s*page|urls?|online)\b)/i;
 const BROWSER_LOOKUP_INTENT = /(?:查一下|查下|查看|看一下|看下|看看|阅读|读一下)[^。！？!?\n]{1,40}上(?:的)?/i;
 const LOCAL_RESOURCE_INTENT = /本地|电脑(?:里|上)?|桌面|文件|文件夹|目录|磁盘|硬盘|项目|工程/i;
+const SCREEN_INTENT = /(?:^\s*\[screen\]\s*|截图|截屏|截(?:个|一个|一下)图|看(?:下|一下|看)?(?:我(?:的)?|当前)?屏幕|我的屏幕|屏幕上|当前画面|电脑上现在|桌面上|看(?:下|一下|看)?(?:我(?:的)?|当前)?桌面|这个窗口|\bscreenshot\b|\bmy\s+screen\b|\bwhat(?:'s|\s+is)\s+on\s+my\s+screen\b)/i;
 
 export function needsBrowser(text) {
   const input = String(text ?? "");
   if (DIRECT_BROWSER_INTENT.test(input)) return true;
   return BROWSER_LOOKUP_INTENT.test(input) && !LOCAL_RESOURCE_INTENT.test(input);
+}
+
+export function needsScreen(text) {
+  return SCREEN_INTENT.test(String(text ?? ""));
+}
+
+export function pickCapability({ tier, needsBrowser: browser = false, needsScreen: screen = false } = {}) {
+  if (tier === TIER.FORBIDDEN) return "deny";
+  if (tier === TIER.PRIVILEGED) return "confirm";
+  if (browser) return "browse";
+  if (screen) return "screen";
+  return "assist";
 }
 
 function matchRule(text, rules) {
@@ -123,6 +136,15 @@ export function classifyTask(text) {
 
   const privileged = matchRule(input, PRIVILEGED_RULES);
   if (privileged) return { tier: TIER.PRIVILEGED, ...privileged };
+
+  const screenMatch = input.match(SCREEN_INTENT);
+  if (screenMatch) {
+    return {
+      tier: TIER.SANDBOX,
+      reason: "查看屏幕或截图",
+      matched: screenMatch[0]
+    };
+  }
 
   const readonlyMatch = input.match(READONLY_INTENT);
   const writeMatch = input.match(WRITE_ACTION);

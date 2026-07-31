@@ -1,12 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { loadEnv, projectRoot, resolveFromCwd, timestampForFile } from "./env.mjs";
-import { runClaudeChat, runClaudeText } from "./brain/claude.mjs";
+import { runClaudeChat, runClaudeText, SCREEN_SYSTEM_PROMPT } from "./brain/claude.mjs";
 import { appendAudit } from "./security/audit.mjs";
 import { createApproval } from "./security/pending.mjs";
-import { classifyTask, needsBrowser, TIER } from "./security/policy.mjs";
+import { classifyTask, needsBrowser, needsScreen, pickCapability, TIER } from "./security/policy.mjs";
 import { redactSensitive } from "./security/redact.mjs";
 import { claimTask, ensureQueue, listPendingTasks, readTask, writeFailure, writeResult } from "./queue.mjs";
 import { sendTelegramDocument, sendTelegramMessage } from "./telegram.mjs";
@@ -24,6 +24,70 @@ function boolEnv(name, fallback = false) {
 
 function codexEntrypoint(root) {
   return path.join(root, "node_modules", "@openai", "codex", "bin", "codex.js");
+}
+
+export function takeScreenshot(root = projectRoot(), spawnSyncImpl = spawnSync) {
+  const scriptPath = path.join(root, "scripts", "take-screenshot.ps1");
+  const result = spawnSyncImpl(
+    "powershell.exe",
+    ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath],
+    {
+      cwd: root,
+      encoding: "utf8",
+      shell: false,
+      windowsHide: true
+    }
+  );
+
+  if (result.error || result.status !== 0) {
+    const detail = oneLine(result.stderr || result.stdout || result.error?.message);
+    throw new Error(detail || `截图脚本退出码：${result.status ?? "unknown"}`);
+  }
+
+  const outputPath = String(result.stdout || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .at(-1);
+  if (!outputPath || !path.isAbsolute(outputPath)) {
+    throw new Error("截图脚本未返回 PNG 绝对路径");
+  }
+
+  const screenshotPath = path.resolve(outputPath);
+  const screenshotRoot = path.join(root, "data", "screenshots");
+  const relativePath = path.relative(screenshotRoot, screenshotPath);
+  if (relativePath.startsWith("..") || path.isAbsolute(relativePath) || path.extname(screenshotPath).toLowerCase() !== ".png") {
+    throw new Error("截图脚本返回了预期目录之外的路径");
+  }
+  if (!fs.existsSync(screenshotPath)) {
+    throw new Error(`截图文件不存在：${screenshotPath}`);
+  }
+
+  return screenshotPath;
+}
+
+export async function runScreenChat(task, root = projectRoot(), dependencies = {}) {
+  const capture = dependencies.takeScreenshot || takeScreenshot;
+  const runChat = dependencies.runClaudeChat || runClaudeChat;
+  let screenshotPath;
+
+  try {
+    screenshotPath = capture(root);
+  } catch (error) {
+    const result = `截图失败，无法查看当前屏幕：${oneLine(error.message || String(error))}`;
+    return { result, notification: result, screenshotFailed: true };
+  }
+
+  const prompt = buildPrompt({
+    ...task,
+    prompt: `[已为你截取当前屏幕，图片路径：${screenshotPath}]\n\n用户请求：${task.prompt}`
+  }, root);
+  const result = await runChat(prompt, {
+    capability: "assist",
+    additionalSystemPrompt: SCREEN_SYSTEM_PROMPT,
+    disableBash: true
+  });
+  return { result, screenshotPath };
 }
 
 export function buildPrompt(task, root = projectRoot()) {
@@ -52,6 +116,18 @@ export function buildPrompt(task, root = projectRoot()) {
     ].join("\n");
   }
 
+  const computerUseTools = ["remote-maintenance", "approved-privileged"].includes(task.taskType)
+    ? [
+        "",
+        "屏幕与输入工具：",
+        "- 截图：powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\take-screenshot.ps1 [-OutFile <path>] [-Display <index>]；脚本输出 PNG 绝对路径，随后读取该 PNG 判断画面。",
+        "- 输入：powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\send-input.ps1 -Action <click|move|type|key>，click/move 传 -X/-Y，type 传 -Text，key 传 -Key Enter/Tab/Escape。",
+        task.taskType === "approved-privileged"
+          ? "- 当前任务已经过 T2 确认；仅在任务明确要求鼠标键盘操作时调用 send-input.ps1。"
+          : "- 当前任务不是已批准的 T2 输入任务，不得调用 send-input.ps1；需要鼠标键盘操作时停下并要求走确认流。"
+      ]
+    : [];
+
   return [
     "你是通过本地 Codex 自动 worker 运行的 Codex。",
     "任务来自用户的 Telegram /codex 指令。请自动完成任务，并在最后输出适合 Telegram 阅读的简体中文结果。",
@@ -62,6 +138,7 @@ export function buildPrompt(task, root = projectRoot()) {
     "- 不要执行大范围删除、格式化磁盘、清空用户资料、破坏系统恢复能力等不可逆操作。",
     "- 如果任务含糊或风险过高，请不要执行危险动作，改为说明需要用户确认什么。",
     "- 对卸载指定软件、清理明确指定软件残留、修改本项目代码/脚本，可以在合理范围内直接执行。",
+    ...computerUseTools,
     "",
     "执行要求：",
     `- 默认工作目录是 ${root}。`,
@@ -377,6 +454,13 @@ export async function processCodexAutoQueue({ notify = true } = {}) {
         const isStudy = task.taskType === "study-distill";
         const isApprovedPrivileged = task.taskType === "approved-privileged";
         const classification = isChat || isApprovedPrivileged ? classifyTask(task.prompt) : null;
+        const chatRoute = isChat
+          ? pickCapability({
+              tier: classification.tier,
+              needsBrowser: needsBrowser(task.prompt),
+              needsScreen: needsScreen(task.prompt)
+            })
+          : null;
         if (
           notify &&
           !isChat &&
@@ -400,7 +484,7 @@ export async function processCodexAutoQueue({ notify = true } = {}) {
           execution = {
             result: `这个请求涉及不可逆/高风险操作，我不会执行。原因：${classification.reason}`
           };
-        } else if (isChat && classification?.tier === TIER.PRIVILEGED) {
+        } else if (isChat && chatRoute === "confirm") {
           const approval = createApproval({
             prompt: task.prompt,
             tier: classification.tier,
@@ -429,8 +513,17 @@ export async function processCodexAutoQueue({ notify = true } = {}) {
           };
         } else if (isStudy) {
           execution = { result: await runClaudeText(buildPrompt(task, root), { timeoutMs: 600000 }) };
+        } else if (isChat && chatRoute === "screen") {
+          execution = await runScreenChat(task, root);
+          appendAudit({
+            kind: "screen",
+            tier: classification.tier,
+            reason: classification.reason,
+            promptPreview: task.prompt,
+            result: execution.screenshotFailed ? "screenshot-failed" : "executed"
+          });
         } else if (isChat) {
-          const capability = needsBrowser(task.prompt) ? "browse" : "assist";
+          const capability = chatRoute;
           execution = { result: await runClaudeChat(buildPrompt(task, root), { capability }) };
           appendAudit({
             kind: capability,
