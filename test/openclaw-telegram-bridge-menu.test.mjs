@@ -11,7 +11,9 @@ test("owner Telegram command menu includes key commands", () => {
 
   assert.equal(commands.has("status"), true);
   assert.equal(commands.has("digest"), true);
+  assert.equal(commands.has("web"), true);
   assert.equal(commands.has("defender_status"), true);
+  assert.equal(OWNER_COMMAND_MENU.length, 18);
 });
 
 test("owner Telegram command menu has no duplicate commands", () => {

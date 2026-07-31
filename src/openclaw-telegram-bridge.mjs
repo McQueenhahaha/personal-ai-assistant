@@ -241,6 +241,7 @@ async function handleCommand({ token, chatId, text, dryRun }) {
     await send(token, chatId, [
       "可用命令：",
       "/status - 查看助手状态",
+      "/web <任务> - 用只读浏览器查看网页",
       "/codex <任务> - 让 Codex 修改/维护本项目",
       "/study <主题> - 蒸馏课程主题，生成学习文档",
       "/local <任务> - 交给本地 Ollama 队列",
@@ -303,6 +304,16 @@ async function handleCommand({ token, chatId, text, dryRun }) {
       return true;
     }
     await dispatchMaintenance({ token, chatId, action, dryRun });
+    return true;
+  }
+
+  if (command === "/web") {
+    if (!rest) {
+      await send(token, chatId, "用法：/web 要浏览器查看的网页任务", dryRun);
+      return true;
+    }
+    createChatTask(`[web] ${rest}`);
+    await send(token, chatId, "🌐 收到，正在用只读浏览器查看…", dryRun);
     return true;
   }
 

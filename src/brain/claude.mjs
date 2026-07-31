@@ -7,6 +7,36 @@ import { projectRoot } from "../env.mjs";
 const ASSIST_SYSTEM_PROMPT = "你在帮用户远程完成任务。可以读文件、搜索、运行只读命令。不要做不可逆操作（删除、发送、付款、改系统设置）；需要这些时，说明原因并建议用户改用 /codex。";
 const ASSIST_TOOLS = "Read,Grep,Glob,Bash";
 const ASSIST_DISALLOWED_TOOLS = "Write,Edit,NotebookEdit,WebFetch";
+const BROWSE_SYSTEM_PROMPT = `${ASSIST_SYSTEM_PROMPT} 你可以浏览网页读取信息。只做只读浏览：导航、阅读、截图、提取信息。绝对不要提交表单、发帖、评论、下单、上传文件、点击“提交作业/submit/确认支付”一类按钮。遇到需要这些的场景，停下来把情况和建议告诉用户。`;
+const BROWSE_TOOLS = `${ASSIST_TOOLS},ToolSearch`;
+const BROWSE_ALLOWED_TOOLS = [
+  "mcp__playwright__browser_console_messages",
+  "mcp__playwright__browser_find",
+  "mcp__playwright__browser_navigate",
+  "mcp__playwright__browser_navigate_back",
+  "mcp__playwright__browser_network_request",
+  "mcp__playwright__browser_network_requests",
+  "mcp__playwright__browser_resize",
+  "mcp__playwright__browser_snapshot",
+  "mcp__playwright__browser_tabs",
+  "mcp__playwright__browser_take_screenshot",
+  "mcp__playwright__browser_wait_for"
+].join(",");
+const BROWSE_DISALLOWED_TOOLS = [
+  ASSIST_DISALLOWED_TOOLS,
+  "mcp__playwright__browser_click",
+  "mcp__playwright__browser_drag",
+  "mcp__playwright__browser_drop",
+  "mcp__playwright__browser_evaluate",
+  "mcp__playwright__browser_file_upload",
+  "mcp__playwright__browser_fill_form",
+  "mcp__playwright__browser_handle_dialog",
+  "mcp__playwright__browser_press_key",
+  "mcp__playwright__browser_run_code_unsafe",
+  "mcp__playwright__browser_select_option",
+  "mcp__playwright__browser_type"
+].join(",");
+const DEFAULT_CHROME_PATH = "D:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 
 function trimError(text, maxLength = 300) {
   const clean = String(text || "").replace(/\s+/g, " ").trim();
@@ -18,10 +48,10 @@ function quoteWindowsShellArg(value) {
   return `"${String(value).replace(/"/g, "\"\"")}"`;
 }
 
-function spawnClaude(cliPath, args) {
+function spawnClaude(cliPath, args, env = process.env) {
   if (process.platform !== "win32") {
     return spawn(cliPath, args, {
-      env: process.env,
+      env,
       shell: false,
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true
@@ -29,7 +59,7 @@ function spawnClaude(cliPath, args) {
   }
 
   return spawn([cliPath, ...args].map(quoteWindowsShellArg).join(" "), {
-    env: process.env,
+    env,
     shell: true,
     stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true
@@ -42,28 +72,59 @@ export async function runClaudeText(prompt, opts = {}) {
     model = process.env.CLAUDE_BRAIN_MODEL || "",
     sessionId = "",
     resume = false,
-    timeoutMs = 120000,
+    timeoutMs,
     capability = "answer-only"
   } = opts;
+  const effectiveTimeoutMs = timeoutMs ?? (capability === "browse" ? 300000 : 120000);
+  let spawnEnv = process.env;
   const args = [
     "-p",
     "--output-format",
     "text"
   ];
 
-  if (capability === "assist") {
+  if (capability === "assist" || capability === "browse") {
+    const browse = capability === "browse";
     args.push(
       "--append-system-prompt",
-      ASSIST_SYSTEM_PROMPT,
+      browse ? BROWSE_SYSTEM_PROMPT : ASSIST_SYSTEM_PROMPT,
       "--add-dir",
       projectRoot(),
       "--permission-mode",
       "dontAsk",
       "--tools",
-      ASSIST_TOOLS,
+      browse ? BROWSE_TOOLS : ASSIST_TOOLS,
       "--disallowedTools",
-      ASSIST_DISALLOWED_TOOLS
+      browse ? BROWSE_DISALLOWED_TOOLS : ASSIST_DISALLOWED_TOOLS
     );
+    if (browse) {
+      const root = projectRoot();
+      const configPath = path.join(root, "config", "playwright-mcp.json");
+      const chromePath = path.resolve(process.env.ASSISTANT_CHROME_PATH || DEFAULT_CHROME_PATH);
+      const profilePath = path.resolve(process.env.ASSISTANT_BROWSER_PROFILE || path.join(root, "data", "browser-profile"));
+      const outputPath = path.join(profilePath, "mcp-output");
+      try {
+        await fs.access(configPath);
+        await fs.access(chromePath);
+        await fs.mkdir(profilePath, { recursive: true });
+        await fs.mkdir(outputPath, { recursive: true });
+      } catch (error) {
+        throw new Error(`浏览器配置不可用：${error.message}`);
+      }
+      spawnEnv = {
+        ...process.env,
+        ASSISTANT_CHROME_PATH: chromePath,
+        ASSISTANT_BROWSER_PROFILE: profilePath,
+        ASSISTANT_BROWSER_OUTPUT: outputPath
+      };
+      args.push(
+        "--mcp-config",
+        configPath,
+        "--strict-mcp-config",
+        "--allowedTools",
+        BROWSE_ALLOWED_TOOLS
+      );
+    }
   } else {
     args.push(
       "--append-system-prompt",
@@ -83,7 +144,7 @@ export async function runClaudeText(prompt, opts = {}) {
     let stderr = "";
     let settled = false;
 
-    const child = spawnClaude(cliPath, args);
+    const child = spawnClaude(cliPath, args, spawnEnv);
     const finish = (error, result) => {
       if (settled) return;
       settled = true;
@@ -96,8 +157,8 @@ export async function runClaudeText(prompt, opts = {}) {
     };
     const timer = setTimeout(() => {
       child.kill();
-      finish(new Error(`Claude 超时：${timeoutMs}ms`));
-    }, timeoutMs);
+      finish(new Error(`Claude 超时：${effectiveTimeoutMs}ms`));
+    }, effectiveTimeoutMs);
 
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");

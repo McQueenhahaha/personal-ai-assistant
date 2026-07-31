@@ -1,0 +1,24 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@playwright/mcp@0.0.78",
+        "--browser",
+        "chrome",
+        "--executable-path",
+        "${ASSISTANT_CHROME_PATH}",
+        "--user-data-dir",
+        "${ASSISTANT_BROWSER_PROFILE}",
+        "--headless",
+        "--codegen",
+        "none",
+        "--output-dir",
+        "${ASSISTANT_BROWSER_OUTPUT}",
+        "--output-mode",
+        "stdout"
+      ]
+    }
+  }
+}

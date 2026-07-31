@@ -96,6 +96,15 @@ const PRIVILEGED_RULES = [
 
 const READONLY_INTENT = /查找|查询|查看|看下|看一下|看看|读取|阅读|找下|找一下|寻找|搜索|检索|列出|是什么|什么是|怎么|如何|为什么|状态|查|看|读|找|\b(?:where|what|how|why|find|search|look\s*up|read|view|show|check|list|inspect|explain)\b/i;
 const WRITE_ACTION = /写入|写个|修改|更改|编辑|删除|删掉|创建|新建|保存|移动|复制|重命名|运行|执行|安装|卸载|发送|提交|下单|付款|转账|点击|输入|更新|设置|开启|关闭|启用|禁用|修复|清理|写|改|删|\b(?:write|modify|change|edit|delete|remove|create|save|move|copy|rename|run|execute|install|uninstall|send|submit|order|pay|transfer|click|type|update|set|enable|disable|fix|clean)\b/i;
+const DIRECT_BROWSER_INTENT = /(?:^\s*\[web\]\s*|canvas|b站|哔哩哔哩|bilibili|网页|网站|浏览器|链接|https?:\/\/|登录|\b(?:browse|website|web\s*page|urls?|online)\b)/i;
+const BROWSER_LOOKUP_INTENT = /(?:查一下|查下|查看|看一下|看下|看看|阅读|读一下)[^。！？!?\n]{1,40}上(?:的)?/i;
+const LOCAL_RESOURCE_INTENT = /本地|电脑(?:里|上)?|桌面|文件|文件夹|目录|磁盘|硬盘|项目|工程/i;
+
+export function needsBrowser(text) {
+  const input = String(text ?? "");
+  if (DIRECT_BROWSER_INTENT.test(input)) return true;
+  return BROWSER_LOOKUP_INTENT.test(input) && !LOCAL_RESOURCE_INTENT.test(input);
+}
 
 function matchRule(text, rules) {
   for (const rule of rules) {

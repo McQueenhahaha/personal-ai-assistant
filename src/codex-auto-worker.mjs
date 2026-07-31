@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { loadEnv, projectRoot, resolveFromCwd, timestampForFile } from "./env.mjs";
 import { runClaudeChat, runClaudeText } from "./brain/claude.mjs";
-import { classifyTask, TIER } from "./security/policy.mjs";
+import { classifyTask, needsBrowser, TIER } from "./security/policy.mjs";
 import { claimTask, ensureQueue, listPendingTasks, readTask, writeFailure, writeResult } from "./queue.mjs";
 import { sendTelegramDocument, sendTelegramMessage } from "./telegram.mjs";
 
@@ -401,7 +401,8 @@ export async function processCodexAutoQueue({ notify = true } = {}) {
         } else if (isStudy) {
           execution = { result: await runClaudeText(buildPrompt(task, root), { timeoutMs: 600000 }) };
         } else if (isChat) {
-          execution = { result: await runClaudeChat(buildPrompt(task, root), { capability: "assist" }) };
+          const capability = needsBrowser(task.prompt) ? "browse" : "assist";
+          execution = { result: await runClaudeChat(buildPrompt(task, root), { capability }) };
         } else {
           execution = await runCodexExec({
             root,
