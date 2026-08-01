@@ -1,5 +1,6 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { loadEnv } from "./env.mjs";
 import { reportFatalSchoolCheckError, runSchoolCheckCli } from "./school/workflow.mjs";
 
 export { zonedParts, dateKeyInZone, minutesInZone, parseClock, dueSlots } from "./school/schedule.mjs";
@@ -14,5 +15,6 @@ export { loadState, saveState, statePath } from "./school/state.mjs";
 export { reportFatalSchoolCheckError, runSchoolCheckCli };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  loadEnv();
   runSchoolCheckCli().catch(reportFatalSchoolCheckError);
 }

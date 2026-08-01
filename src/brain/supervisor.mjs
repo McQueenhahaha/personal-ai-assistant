@@ -12,6 +12,7 @@ import {
 } from "./lease.mjs";
 import { pullSoul, pushSoul, readSoulLease } from "./soul-sync.mjs";
 import { macSatelliteHealth } from "../satellite/mac.mjs";
+import { loadEnv } from "../env.mjs";
 
 const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const LEASE_FILE = path.join(REPO_ROOT, "data", "state", "brain-lease.json");
@@ -383,6 +384,7 @@ export async function runSupervisorRound(state = {}, dependencies = {}) {
 }
 
 export async function runSupervisor({ once = false } = {}, dependencies = {}) {
+  loadEnv();
   const sleep = dependencies.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   let state = { unreachableStreak: 0, missingPeerIpWarningLogged: false };
 
