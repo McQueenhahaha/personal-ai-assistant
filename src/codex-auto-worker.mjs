@@ -11,12 +11,14 @@ import {
   listUpcomingAssignments
 } from "./canvas/api.mjs";
 import { sendCanvasUnauthorizedAlert } from "./canvas/token-alert.mjs";
+import { dispatchToMac } from "./satellite/mac.mjs";
 import { appendAudit } from "./security/audit.mjs";
 import { createApproval } from "./security/pending.mjs";
 import {
   classifyTask,
   needsBrowser,
   needsCanvas,
+  needsMac,
   needsScreen,
   pickCapability,
   TIER
@@ -525,7 +527,10 @@ function runCodexExec({ root, prompt, taskStem, onProgress }) {
   });
 }
 
-export async function processCodexAutoQueue({ notify = true } = {}) {
+export async function processCodexAutoQueue({
+  notify = true,
+  dispatchToMac: dispatchMac = dispatchToMac
+} = {}) {
   loadEnv();
 
   const pauseFile = resolveFromCwd("./data/state/assistant-paused.flag");
@@ -569,6 +574,7 @@ export async function processCodexAutoQueue({ notify = true } = {}) {
         const chatRoute = isChat
           ? pickCapability({
               tier: classification.tier,
+              needsMac: needsMac(task.prompt),
               needsCanvas: needsCanvas(task.prompt),
               needsBrowser: needsBrowser(task.prompt),
               needsScreen: needsScreen(task.prompt)
@@ -626,6 +632,26 @@ export async function processCodexAutoQueue({ notify = true } = {}) {
           };
         } else if (isStudy) {
           execution = { result: await runClaudeText(buildPrompt(task, root), { timeoutMs: 600000 }) };
+        } else if (
+          (isChat && chatRoute === "mac") ||
+          (isApprovedPrivileged && needsMac(task.prompt))
+        ) {
+          const macResult = await dispatchMac({
+            prompt: task.prompt,
+            kind: isApprovedPrivileged ? "mac-computer-use" : "mac-general"
+          });
+          if (!macResult.ok) {
+            throw new Error(`Mac 卫星执行失败：${macResult.error || "未提供失败原因"}`);
+          }
+          execution = { result: macResult.result || "Mac 卫星任务已完成。" };
+          appendAudit({
+            kind: "mac",
+            tier: classification.tier,
+            reason: classification.reason,
+            promptPreview: task.prompt,
+            result: "executed",
+            approvalId: task.metadata?.approvalId
+          });
         } else if (isChat && chatRoute === "canvas") {
           execution = await runCanvasChat(task, root);
           appendAudit({

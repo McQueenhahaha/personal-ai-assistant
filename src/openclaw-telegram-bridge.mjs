@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { createTask, ensureQueue, listPendingTasks } from "./queue.mjs";
 import { envNumber, loadEnv, projectRoot, resolveFromCwd } from "./env.mjs";
 import { OWNER_COMMAND_MENU } from "./openclaw/command-menu.mjs";
+import { macSatelliteHealth } from "./satellite/mac.mjs";
 import { appendAudit } from "./security/audit.mjs";
 import { isExpired, loadApprovals, resolveApproval, saveApprovals } from "./security/pending.mjs";
 import { classifyTask, TIER } from "./security/policy.mjs";
@@ -113,7 +114,7 @@ async function send(token, chatId, text, dryRun) {
   });
 }
 
-function summarizeStatus() {
+async function summarizeStatus() {
   const dataDir = resolveFromCwd("./data");
   const flags = ["assistant-desired-running.flag", "assistant-running.flag", "assistant-suspended-for-game.flag", "school-game-catchup-needed.flag"]
     .map((name) => `${name}: ${fs.existsSync(path.join(dataDir, name)) ? "YES" : "NO"}`)
@@ -122,13 +123,23 @@ function summarizeStatus() {
   const codexInbox = process.env.CODEX_QUEUE_INBOX || "./data/queues/codex/inbox";
   ensureQueue(localInbox);
   ensureQueue(codexInbox);
+  let macStatus;
+  try {
+    const health = await macSatelliteHealth();
+    macStatus = health.online && health.agentRunning
+      ? "Mac 卫星：在线（代理运行中）"
+      : `Mac 卫星：离线${health.error ? `（${health.error}）` : ""}`;
+  } catch (error) {
+    macStatus = `Mac 卫星：离线（${error.message || String(error)}）`;
+  }
   return [
     "AI 助手状态",
     "",
     flags,
     "",
     `Local 队列待处理：${listPendingTasks(localInbox).length}`,
-    `Codex 队列待处理：${listPendingTasks(codexInbox).length}`
+    `Codex 队列待处理：${listPendingTasks(codexInbox).length}`,
+    macStatus
   ].join("\n");
 }
 
@@ -260,6 +271,7 @@ async function handleCommand({ token, chatId, text, dryRun }) {
       "/status - 查看助手状态",
       "/web <任务> - 用只读浏览器查看网页",
       "/screen [说明] - 查看当前电脑屏幕",
+      "/mac <任务> - 交给 Mac 卫星的 Codex 执行",
       "/codex <任务> - 让 Codex 修改/维护本项目",
       "/study <主题> - 蒸馏课程主题，生成学习文档",
       "/local <任务> - 交给本地 Ollama 队列",
@@ -289,7 +301,7 @@ async function handleCommand({ token, chatId, text, dryRun }) {
   }
 
   if (command === "/status") {
-    await send(token, chatId, summarizeStatus(), dryRun);
+    await send(token, chatId, await summarizeStatus(), dryRun);
     return true;
   }
 
@@ -478,6 +490,16 @@ async function handleCommand({ token, chatId, text, dryRun }) {
     const request = rest || "查看当前屏幕并说明你看到的内容";
     createChatTask(`[screen] ${request}`);
     await send(token, chatId, "🖥 收到，正在查看当前屏幕…", dryRun);
+    return true;
+  }
+
+  if (command === "/mac") {
+    if (!rest) {
+      await send(token, chatId, "用法：/mac 要交给 Mac 卫星执行的任务", dryRun);
+      return true;
+    }
+    createChatTask(`[mac] ${rest}`);
+    await send(token, chatId, "💻 收到，正在交给 Mac 卫星处理…", dryRun);
     return true;
   }
 
