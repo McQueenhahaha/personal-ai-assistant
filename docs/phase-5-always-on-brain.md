@@ -153,7 +153,7 @@ Windows 检测到游戏启动 → **不再挂起助手**，而是：
 | 文件 | 为什么关键 |
 |---|---|
 | `openclaw-telegram-bridge-state.json` | 已读消息 key，不同步会重复回复 |
-| `telegram-chat-session.json` | 多轮对话会话 id，不同步会失忆 |
+| `chat-history.json` | 最近多轮对话内容，不同步会失忆 |
 | `pending-approvals.json` | 待确认任务 |
 | `canvas-reminders-sent.json` | 提醒去重 |
 | `school-check-state.json` | 学校检查去重 |

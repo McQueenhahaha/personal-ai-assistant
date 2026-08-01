@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { projectRoot } from "../env.mjs";
+import { appendTurn, isStale, loadHistory, renderContext, saveHistory } from "./history.mjs";
 
 const ASSIST_SYSTEM_PROMPT = "你在帮用户远程完成任务。可以读文件、搜索、运行只读命令。不要做不可逆操作（删除、发送、付款、改系统设置）；需要这些时，说明原因并建议用户改用 /codex。";
 const ASSIST_TOOLS = "Read,Grep,Glob,Bash";
@@ -203,29 +203,10 @@ export async function runClaudeText(prompt, opts = {}) {
   });
 }
 
-export function shouldResetChatSession(state, nowMs, idleMs) {
-  if (!state?.sessionId) return true;
-  return nowMs - state.lastAtMs >= idleMs;
-}
-
-async function readChatSessionState(stateFile) {
-  try {
-    return JSON.parse(await fs.readFile(stateFile, "utf8"));
-  } catch (error) {
-    if (error?.code === "ENOENT" || error instanceof SyntaxError) return null;
-    throw error;
-  }
-}
-
-async function writeChatSessionState(stateFile, state) {
-  await fs.mkdir(path.dirname(stateFile), { recursive: true });
-  await fs.writeFile(stateFile, `${JSON.stringify(state, null, 2)}\n`, "utf8");
-}
-
 export async function runClaudeChat(prompt, opts = {}) {
   const {
     nowMs = Date.now(),
-    stateFile = process.env.CHAT_SESSION_FILE || "./data/state/telegram-chat-session.json",
+    stateFile = "./data/state/chat-history.json",
     idleMs = (Number(process.env.CHAT_SESSION_IDLE_MINUTES) > 0 ? Number(process.env.CHAT_SESSION_IDLE_MINUTES) : 30) * 60000,
     cliPath,
     model,
@@ -235,39 +216,24 @@ export async function runClaudeChat(prompt, opts = {}) {
     disableBash = false
   } = opts;
 
-  const state = await readChatSessionState(stateFile);
-  const reset = shouldResetChatSession(state, nowMs, idleMs);
-  let sessionId = reset ? randomUUID() : state.sessionId;
-  let resume = !reset;
-  let result;
+  const loadedHistory = await loadHistory(stateFile);
+  const history = isStale(loadedHistory, nowMs, idleMs)
+    ? { turns: [], updatedAt: null }
+    : loadedHistory;
+  const context = renderContext(history);
+  const userText = String(prompt ?? "");
+  const fullPrompt = context ? `${context}\n\n${userText}` : userText;
+  const result = await runClaudeText(fullPrompt, {
+    cliPath,
+    model,
+    timeoutMs,
+    capability,
+    additionalSystemPrompt,
+    disableBash
+  });
+  const withUser = appendTurn(history, { role: "user", text: userText, atMs: nowMs });
+  const withAssistant = appendTurn(withUser, { role: "assistant", text: result, atMs: nowMs });
 
-  try {
-    result = await runClaudeText(prompt, {
-      cliPath,
-      model,
-      timeoutMs,
-      sessionId,
-      resume,
-      capability,
-      additionalSystemPrompt,
-      disableBash
-    });
-  } catch (error) {
-    if (!resume) throw error;
-    sessionId = randomUUID();
-    resume = false;
-    result = await runClaudeText(prompt, {
-      cliPath,
-      model,
-      timeoutMs,
-      sessionId,
-      resume,
-      capability,
-      additionalSystemPrompt,
-      disableBash
-    });
-  }
-
-  await writeChatSessionState(stateFile, { sessionId, lastAtMs: nowMs });
+  await saveHistory(stateFile, withAssistant);
   return result;
 }
