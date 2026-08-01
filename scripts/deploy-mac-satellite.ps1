@@ -6,6 +6,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Mac 侧结果含中文；PS 5.1 默认按 ANSI 解码原生命令输出会乱码，导致 ConvertFrom-Json 失败。
+$PreviousConsoleEncoding = [Console]::OutputEncoding
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
 function Resolve-KeyPath {
   param([string]$PathValue)
 
@@ -97,7 +101,18 @@ try {
     -ArgumentList (@($SshCommon) + @($PreparedPlist, "${MacHost}:$RemotePlist")) `
     -FailureMessage "上传 LaunchAgent plist 失败"
 
-  & ssh @SshCommon $MacHost launchctl unload $RemotePlist 2>$null
+  # 首次部署时没有已加载的 agent，unload 必然失败；PowerShell 会把原生命令的 stderr
+  # 包成 NativeCommandError 导致中断，所以整体包 try/catch 并显式吞掉。
+  try {
+    $PreviousEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    & ssh @SshCommon $MacHost launchctl unload $RemotePlist *> $null
+  } catch {
+    # 忽略：未加载过就是正常情况
+  } finally {
+    $ErrorActionPreference = $PreviousEap
+    $global:LASTEXITCODE = 0
+  }
   Invoke-NativeChecked `
     -FilePath "ssh" `
     -ArgumentList (@($SshCommon) + @($MacHost, "launchctl", "load", "-w", $RemotePlist)) `
@@ -125,8 +140,13 @@ try {
   $ProbeDeadline = [DateTime]::UtcNow.AddMilliseconds($ProbeTimeoutMs + 60000)
   $ProbeResult = $null
   while ([DateTime]::UtcNow -lt $ProbeDeadline) {
+    # 结果文件尚未生成时 cat 会写 stderr，PowerShell 会包成 NativeCommandError；
+    # 这是轮询的正常状态，必须吞掉而不是中断。
+    $PreviousEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     $ProbeOutput = & ssh @SshCommon $MacHost cat "$MacSatelliteRoot/outbox/$ProbeId.json" 2>$null
     $ProbeExitCode = $LASTEXITCODE
+    $ErrorActionPreference = $PreviousEap
     if ($ProbeExitCode -eq 0) {
       $ProbeResult = ($ProbeOutput -join "`n") | ConvertFrom-Json
       break
