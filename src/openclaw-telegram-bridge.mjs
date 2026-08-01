@@ -9,6 +9,7 @@ import { macSatelliteHealth } from "./satellite/mac.mjs";
 import { appendAudit } from "./security/audit.mjs";
 import { isExpired, loadApprovals, resolveApproval, saveApprovals } from "./security/pending.mjs";
 import { classifyTask, TIER } from "./security/policy.mjs";
+import { requestJson } from "./telegram/http.mjs";
 import { fetchUpdates, nextOffset, parseUpdates } from "./telegram/updates.mjs";
 
 const DEFAULT_MESSAGE_FILE = "./.openclaw/state/agents/main/sessions/sessions.json.telegram-messages.json";
@@ -96,16 +97,11 @@ function commandParts(text) {
 }
 
 async function telegramApi(token, method, body) {
-  const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+  const json = await requestJson(`https://api.telegram.org/bot${token}/${method}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body)
+    body
   });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Telegram ${method} failed ${response.status}: ${text}`);
-  }
-  const json = await response.json();
   if (!json.ok) throw new Error(`Telegram ${method} returned ok=false`);
   return json.result;
 }

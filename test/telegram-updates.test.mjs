@@ -48,14 +48,11 @@ test("nextOffset advances past the largest update id", () => {
 test("fetchUpdates sends long-polling parameters and returns raw updates", async () => {
   const expected = [{ update_id: 21, message: { text: "hello" } }];
   let requestedUrl;
-  const fetchImpl = async (url) => {
+  let requestedOptions;
+  const fetchImpl = async (url, options) => {
     requestedUrl = new URL(url);
-    return {
-      ok: true,
-      async json() {
-        return { ok: true, result: expected };
-      }
-    };
+    requestedOptions = options;
+    return { ok: true, result: expected };
   };
 
   assert.equal(await fetchUpdates({
@@ -68,6 +65,7 @@ test("fetchUpdates sends long-polling parameters and returns raw updates", async
   assert.equal(requestedUrl.searchParams.get("offset"), "17");
   assert.equal(requestedUrl.searchParams.get("timeout"), "31");
   assert.deepEqual(JSON.parse(requestedUrl.searchParams.get("allowed_updates")), ["message"]);
+  assert.equal(requestedOptions.timeoutMs, 36000);
 });
 
 test("fetchUpdates propagates network errors", async () => {
@@ -82,17 +80,13 @@ test("fetchUpdates propagates network errors", async () => {
   );
 });
 
-test("fetchUpdates throws on HTTP errors", async () => {
+test("fetchUpdates throws on invalid Telegram responses", async () => {
   await assert.rejects(
     fetchUpdates({
       token: "test-token",
       offset: 0,
-      fetchImpl: async () => ({
-        ok: false,
-        status: 502,
-        async text() { return "bad gateway"; }
-      })
+      fetchImpl: async () => ({ ok: false })
     }),
-    /Telegram getUpdates failed 502: bad gateway/
+    /Telegram getUpdates returned an invalid response/
   );
 });

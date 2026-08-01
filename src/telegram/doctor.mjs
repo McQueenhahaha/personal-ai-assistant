@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import { spawnSync } from "node:child_process";
 import { loadEnv, resolveFromCwd } from "../env.mjs";
+import { requestJson } from "./http.mjs";
 
 const OFFSET_FILE = "./data/state/telegram-update-offset.json";
 const HEARTBEAT_FILE = "./data/state/telegram-direct-heartbeat.json";
@@ -44,11 +45,7 @@ async function printWebhookInfo(token) {
   }
 
   try {
-    const response = await fetch(`https://api.telegram.org/bot${token}/getWebhookInfo`);
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${await response.text()}`);
-    }
-    const body = await response.json();
+    const body = await requestJson(`https://api.telegram.org/bot${token}/getWebhookInfo`);
     if (!body.ok || !body.result) {
       throw new Error("Telegram getWebhookInfo 返回无效响应");
     }
@@ -56,6 +53,26 @@ async function printWebhookInfo(token) {
     console.log(`webhook url：${body.result.url || "(空)"}`);
   } catch (error) {
     console.log(`Webhook 检查失败：${error.message || String(error)}`);
+    process.exitCode = 1;
+  }
+}
+
+async function printNetworkCheck(token) {
+  if (!token) {
+    console.log("Telegram 网络自检：跳过（缺少 TELEGRAM_BOT_TOKEN）");
+    return;
+  }
+
+  const startedAt = Date.now();
+  try {
+    const body = await requestJson(`https://api.telegram.org/bot${token}/getMe`);
+    if (!body.ok || !body.result) {
+      throw new Error("Telegram getMe 返回无效响应");
+    }
+    console.log(`Telegram 网络自检：成功（getMe，${Date.now() - startedAt} ms）`);
+  } catch (error) {
+    console.log(`Telegram 网络自检：失败（getMe，${Date.now() - startedAt} ms）：${error.message || String(error)}`);
+    console.log("提示：可能是到 Telegram 的 IPv6 路由不通，请尝试 TELEGRAM_IP_FAMILY=4");
     process.exitCode = 1;
   }
 }
@@ -138,7 +155,9 @@ async function main() {
     console.log("offset 状态：缺少有效整数 offset");
   }
 
-  await printWebhookInfo(process.env.TELEGRAM_BOT_TOKEN || "");
+  const token = process.env.TELEGRAM_BOT_TOKEN || "";
+  await printNetworkCheck(token);
+  await printWebhookInfo(token);
   printBridgeProcesses();
 }
 

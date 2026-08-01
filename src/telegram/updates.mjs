@@ -1,3 +1,5 @@
+import { requestJson } from "./http.mjs";
+
 const GET_UPDATES_URL = "https://api.telegram.org";
 
 export function parseUpdates(updates) {
@@ -27,19 +29,15 @@ export function nextOffset(updates, currentOffset) {
   return maximumUpdateId == null ? currentOffset : maximumUpdateId + 1;
 }
 
-export async function fetchUpdates({ token, offset, timeoutSeconds = 25, fetchImpl = fetch }) {
+export async function fetchUpdates({ token, offset, timeoutSeconds = 25, fetchImpl = requestJson }) {
   const query = new URLSearchParams({
     offset: String(offset),
     timeout: String(timeoutSeconds),
     allowed_updates: JSON.stringify(["message"])
   });
-  const response = await fetchImpl(`${GET_UPDATES_URL}/bot${token}/getUpdates?${query}`);
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Telegram getUpdates failed ${response.status}: ${body}`);
-  }
-
-  const json = await response.json();
+  const json = await fetchImpl(`${GET_UPDATES_URL}/bot${token}/getUpdates?${query}`, {
+    timeoutMs: (timeoutSeconds + 5) * 1000
+  });
   if (!json.ok || !Array.isArray(json.result)) {
     throw new Error("Telegram getUpdates returned an invalid response");
   }

@@ -1,5 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
+import { requestJson } from "./telegram/http.mjs";
 
 const TELEGRAM_LIMIT = 3900;
 
@@ -31,22 +33,19 @@ export async function sendTelegramMessage(text) {
 
   const url = `https://api.telegram.org/bot${token}/sendMessage`;
   for (const chunk of splitMessage(text)) {
-    const response = await fetch(url, {
+    const response = await requestJson(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({
+      body: {
         chat_id: chatId,
         text: chunk,
         disable_web_page_preview: false
-      })
+      }
     });
 
-    if (!response.ok) {
-      const body = await response.text();
-      throw new Error(`Telegram send failed ${response.status}: ${body}`);
-    }
+    if (!response.ok) throw new Error("Telegram sendMessage returned ok=false");
   }
 
   return { sent: true };
@@ -61,20 +60,30 @@ export async function sendTelegramDocument(filePath, caption = "") {
     return { sent: false, reason: "missing Telegram config" };
   }
 
-  const form = new FormData();
-  form.append("chat_id", chatId);
-  if (caption) form.append("caption", caption.slice(0, 1000));
-  form.append("document", new Blob([fs.readFileSync(filePath)]), path.basename(filePath));
+  const boundary = `----personal-ai-assistant-${randomUUID()}`;
+  const parts = [];
+  const appendField = (name, value) => {
+    parts.push(Buffer.from(
+      `--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`
+    ));
+  };
+  appendField("chat_id", chatId);
+  if (caption) appendField("caption", caption.slice(0, 1000));
+  const filename = path.basename(filePath).replace(/[\r\n"]/g, "_");
+  parts.push(Buffer.from(
+    `--${boundary}\r\nContent-Disposition: form-data; name="document"; filename="${filename}"\r\n`
+      + "Content-Type: application/octet-stream\r\n\r\n"
+  ));
+  parts.push(fs.readFileSync(filePath));
+  parts.push(Buffer.from(`\r\n--${boundary}--\r\n`));
 
-  const response = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
+  const response = await requestJson(`https://api.telegram.org/bot${token}/sendDocument`, {
     method: "POST",
-    body: form
+    headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` },
+    body: Buffer.concat(parts)
   });
 
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Telegram document send failed ${response.status}: ${body}`);
-  }
+  if (!response.ok) throw new Error("Telegram sendDocument returned ok=false");
 
   return { sent: true };
 }
