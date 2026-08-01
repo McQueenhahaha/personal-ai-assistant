@@ -8,6 +8,10 @@
 *.pfx
 *secret*
 *token*
+!src/canvas/token-alert.mjs
+!src/canvas/token-guard.mjs
+!test/canvas-token-alert.test.mjs
+!test/canvas-token-guard.test.mjs
 *cookie*
 *credentials*
 config/google-oauth-client.json

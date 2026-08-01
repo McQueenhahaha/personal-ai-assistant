@@ -103,3 +103,22 @@ export function formatUpcomingList(assignments, nowMs, limit = 10) {
     })
   ].join("\n");
 }
+
+export function formatApiUpcomingList(assignments, nowMs, limit = 10) {
+  const upcoming = assignments
+    .filter((assignment) => Number.isFinite(assignment.dueAtMs) && assignment.dueAtMs > nowMs)
+    .sort((a, b) => a.dueAtMs - b.dueAtMs)
+    .slice(0, limit);
+
+  if (upcoming.length === 0) return "近期没有待交作业。";
+
+  return [
+    "📚 近期 Canvas 作业 due",
+    ...upcoming.map((assignment, index) => {
+      const courseCode = assignment.courseCode || "未识别";
+      const submission = assignment.submitted ? "已提交" : "未提交";
+      const points = assignment.pointsPossible == null ? "分值未标注" : `${assignment.pointsPossible} 分`;
+      return `${index + 1}. [${courseCode}] ${assignment.name} — 还有${formatDuration(assignment.dueAtMs, nowMs)}；${formatLocalDateTime(assignment.dueAtMs)}；${submission}；${points}`;
+    })
+  ].join("\n");
+}

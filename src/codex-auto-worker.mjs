@@ -4,9 +4,23 @@ import { spawn, spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { loadEnv, projectRoot, resolveFromCwd, timestampForFile } from "./env.mjs";
 import { runClaudeChat, runClaudeText, SCREEN_SYSTEM_PROMPT } from "./brain/claude.mjs";
+import {
+  findAssignments,
+  getAssignmentDetail,
+  listActiveCourses,
+  listUpcomingAssignments
+} from "./canvas/api.mjs";
+import { sendCanvasUnauthorizedAlert } from "./canvas/token-alert.mjs";
 import { appendAudit } from "./security/audit.mjs";
 import { createApproval } from "./security/pending.mjs";
-import { classifyTask, needsBrowser, needsScreen, pickCapability, TIER } from "./security/policy.mjs";
+import {
+  classifyTask,
+  needsBrowser,
+  needsCanvas,
+  needsScreen,
+  pickCapability,
+  TIER
+} from "./security/policy.mjs";
 import { redactSensitive } from "./security/redact.mjs";
 import { claimTask, ensureQueue, listPendingTasks, readTask, writeFailure, writeResult } from "./queue.mjs";
 import { sendTelegramDocument, sendTelegramMessage } from "./telegram.mjs";
@@ -88,6 +102,104 @@ export async function runScreenChat(task, root = projectRoot(), dependencies = {
     disableBash: true
   });
   return { result, screenshotPath };
+}
+
+function formatCanvasDate(ms) {
+  if (!Number.isFinite(ms)) return "未设置";
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).format(new Date(ms));
+}
+
+function compactCanvasText(text, maxLength = 8000) {
+  const value = String(text || "").trim();
+  return value.length <= maxLength ? value : `${value.slice(0, maxLength - 3)}...`;
+}
+
+function formatCanvasSnapshot({ courses, assignments, detail, failure }) {
+  if (failure) return `读取失败：${failure}`;
+
+  const lines = [
+    `活跃学术课程（${courses.length}）：`,
+    ...courses.map((course) => `- ${course.code || "无课程代码"} | ${course.name}`),
+    `未来 21 天作业（${assignments.length}）：`,
+    ...assignments.map((assignment) => {
+      const points = assignment.pointsPossible == null ? "分值未标注" : `${assignment.pointsPossible} 分`;
+      return `- [${assignment.courseCode || "无课程代码"}] ${assignment.name} | 截止 ${formatCanvasDate(assignment.dueAtMs)} | ${assignment.submitted ? "已提交" : "未提交"} | ${points}`;
+    })
+  ];
+
+  if (detail) {
+    lines.push(
+      "匹配到的作业详情：",
+      `- ${detail.name} | 截止 ${formatCanvasDate(detail.dueAtMs)} | ${detail.submission.submitted ? "已提交" : "未提交"}`,
+      `- 要求：${compactCanvasText(detail.description) || "Canvas 未提供文字说明"}`
+    );
+    if (detail.rubric.length > 0) {
+      lines.push(
+        "- Rubric：",
+        ...detail.rubric.slice(0, 12).map((criterion) => {
+          const points = criterion.pointsPossible == null ? "" : `（${criterion.pointsPossible} 分）`;
+          return `  - ${criterion.description}${points}${criterion.longDescription ? `：${criterion.longDescription}` : ""}`;
+        })
+      );
+    }
+    if (detail.url) lines.push(`- 链接：${detail.url}`);
+  }
+
+  return lines.join("\n");
+}
+
+export async function runCanvasChat(task, root = projectRoot(), dependencies = {}) {
+  const listCourses = dependencies.listActiveCourses || listActiveCourses;
+  const listUpcoming = dependencies.listUpcomingAssignments || listUpcomingAssignments;
+  const find = dependencies.findAssignments || findAssignments;
+  const getDetail = dependencies.getAssignmentDetail || getAssignmentDetail;
+  const runChat = dependencies.runClaudeChat || runClaudeChat;
+  const send = dependencies.sendTelegramMessage || sendTelegramMessage;
+  let canvasData;
+
+  try {
+    const courses = await listCourses();
+    const assignments = await listUpcoming({ withinDays: 21, courses });
+    const candidates = await find(task.prompt, { courses });
+    const candidate = candidates[0];
+    const detail = candidate
+      ? await getDetail(candidate.courseId, candidate.id)
+      : null;
+    canvasData = formatCanvasSnapshot({ courses, assignments, detail });
+  } catch (error) {
+    if (error?.status === 401) {
+      try {
+        await sendCanvasUnauthorizedAlert({ send });
+      } catch {
+        // The Canvas answer still needs to explain the read failure.
+      }
+    }
+    canvasData = formatCanvasSnapshot({
+      failure: redactSensitive(oneLine(error.message || String(error)))
+    });
+  }
+
+  const canvasPrompt = [
+    "[Canvas 数据（实时读取）]",
+    canvasData,
+    "说明：以上详情已经通过 Canvas API 读取。若要求字段很短或为空，请如实说明 Canvas API 的 description 未提供更多内容；不要建议改走浏览器或 /codex。",
+    "只能依据以上数据回答，禁止补充未列出的课程、作业、分值、截止日期或要求。",
+    "",
+    `用户问题：${task.prompt}`
+  ].join("\n");
+  const result = await runChat(buildPrompt({ ...task, prompt: canvasPrompt }, root), {
+    capability: "assist",
+    disableBash: true,
+    additionalSystemPrompt: "Canvas 问答只能依据用户消息中提供的实时 API 数据；不得猜测或补充其中没有的课程、作业、日期、分值或要求。"
+  });
+  return { result, canvasData };
 }
 
 export function buildPrompt(task, root = projectRoot()) {
@@ -457,6 +569,7 @@ export async function processCodexAutoQueue({ notify = true } = {}) {
         const chatRoute = isChat
           ? pickCapability({
               tier: classification.tier,
+              needsCanvas: needsCanvas(task.prompt),
               needsBrowser: needsBrowser(task.prompt),
               needsScreen: needsScreen(task.prompt)
             })
@@ -513,6 +626,15 @@ export async function processCodexAutoQueue({ notify = true } = {}) {
           };
         } else if (isStudy) {
           execution = { result: await runClaudeText(buildPrompt(task, root), { timeoutMs: 600000 }) };
+        } else if (isChat && chatRoute === "canvas") {
+          execution = await runCanvasChat(task, root);
+          appendAudit({
+            kind: "canvas",
+            tier: classification.tier,
+            reason: classification.reason,
+            promptPreview: task.prompt,
+            result: "executed"
+          });
         } else if (isChat && chatRoute === "screen") {
           execution = await runScreenChat(task, root);
           appendAudit({

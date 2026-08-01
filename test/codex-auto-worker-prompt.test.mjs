@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { buildPrompt, runScreenChat, takeScreenshot } from "../src/codex-auto-worker.mjs";
+import { buildPrompt, runCanvasChat, runScreenChat, takeScreenshot } from "../src/codex-auto-worker.mjs";
 
 test("buildPrompt uses answer-only prompt for Telegram chat tasks", () => {
   const prompt = buildPrompt({
@@ -143,4 +143,94 @@ test("runScreenChat degrades normally when screenshot capture fails", async () =
   assert.equal(execution.screenshotFailed, true);
   assert.equal(execution.result.includes("截图失败"), true);
   assert.equal(execution.notification.includes("No displays were detected"), true);
+});
+
+test("runCanvasChat fetches deterministic context before asking Claude without Bash", async () => {
+  const calls = [];
+  let claudeCall;
+  const task = {
+    taskType: "telegram-chat",
+    prompt: "帮我看下 AERO2356 最近的作业要求",
+    title: "canvas",
+    priority: "normal",
+    source: "telegram"
+  };
+
+  const execution = await runCanvasChat(task, path.resolve("canvas-test-root"), {
+    async listActiveCourses() {
+      calls.push("courses");
+      return [{ id: 7, code: "AERO2356", name: "Systems Engineering" }];
+    },
+    async listUpcomingAssignments(options) {
+      calls.push(["upcoming", options.courses[0].id]);
+      return [{
+        courseCode: "AERO2356",
+        courseName: "Systems Engineering",
+        id: 9,
+        name: "Group assessment",
+        dueAtMs: Date.parse("2026-08-20T06:00:00Z"),
+        url: "https://canvas.test/assignments/9",
+        submitted: false,
+        pointsPossible: 30
+      }];
+    },
+    async findAssignments(query, options) {
+      calls.push(["find", query, options.courses[0].id]);
+      return [{ courseId: 7, id: 9 }];
+    },
+    async getAssignmentDetail(courseId, assignmentId) {
+      calls.push(["detail", courseId, assignmentId]);
+      return {
+        name: "Group assessment",
+        description: "完成需求分析、架构权衡和验证报告。",
+        dueAtMs: Date.parse("2026-08-20T06:00:00Z"),
+        url: "https://canvas.test/assignments/9",
+        pointsPossible: 30,
+        submission: { submitted: false },
+        rubric: [{ description: "Requirements", longDescription: "Traceability", pointsPossible: 10 }]
+      };
+    },
+    async runClaudeChat(prompt, options) {
+      claudeCall = { prompt, options };
+      return "需要完成需求分析、架构权衡和验证报告。";
+    }
+  });
+
+  assert.deepEqual(calls, [
+    "courses",
+    ["upcoming", 7],
+    ["find", task.prompt, 7],
+    ["detail", 7, 9]
+  ]);
+  assert.equal(claudeCall.prompt.includes("[Canvas 数据（实时读取）]"), true);
+  assert.equal(claudeCall.prompt.includes("完成需求分析、架构权衡和验证报告"), true);
+  assert.equal(claudeCall.prompt.includes("不要建议改走浏览器或 /codex"), true);
+  assert.equal(claudeCall.prompt.includes("禁止补充未列出的课程、作业"), true);
+  assert.equal(claudeCall.prompt.includes(`用户问题：${task.prompt}`), true);
+  assert.equal(claudeCall.options.capability, "assist");
+  assert.equal(claudeCall.options.disableBash, true);
+  assert.equal(claudeCall.options.additionalSystemPrompt.includes("不得猜测或补充"), true);
+  assert.equal(execution.result, "需要完成需求分析、架构权衡和验证报告。");
+});
+
+test("runCanvasChat gives Claude an explicit data failure instead of pretending", async () => {
+  let promptSeen = "";
+  const execution = await runCanvasChat({
+    taskType: "telegram-chat",
+    prompt: "Canvas 最近有什么作业",
+    title: "canvas",
+    priority: "normal",
+    source: "telegram"
+  }, path.resolve("canvas-test-root"), {
+    async listActiveCourses() {
+      throw new Error("network unavailable");
+    },
+    async runClaudeChat(prompt) {
+      promptSeen = prompt;
+      return "目前无法读取 Canvas 实时数据。";
+    }
+  });
+
+  assert.equal(promptSeen.includes("读取失败：network unavailable"), true);
+  assert.equal(execution.result, "目前无法读取 Canvas 实时数据。");
 });

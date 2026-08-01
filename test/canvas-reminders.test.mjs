@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { selectDueReminders } from "../src/canvas/reminders.mjs";
+import { formatApiUpcomingList, selectDueReminders } from "../src/canvas/reminders.mjs";
 
 const nowMs = Date.UTC(2026, 0, 1, 0, 0, 0);
 
@@ -53,4 +53,22 @@ test("selectDueReminders deduplicates sent thresholds and returns new state", ()
   assert.deepEqual(sentState, {
     "due-20": [24]
   });
+});
+
+test("formatApiUpcomingList includes course, remaining time, submission, and points", () => {
+  const output = formatApiUpcomingList([{
+    courseCode: "AERO2356",
+    courseName: "Systems Engineering",
+    id: 9,
+    name: "Group assessment",
+    dueAtMs: nowMs + (50 * 3600000),
+    url: "",
+    submitted: false,
+    pointsPossible: 30
+  }], nowMs);
+
+  assert.equal(output.includes("[AERO2356] Group assessment"), true);
+  assert.equal(output.includes("还有2天2小时"), true);
+  assert.equal(output.includes("未提交"), true);
+  assert.equal(output.includes("30 分"), true);
 });

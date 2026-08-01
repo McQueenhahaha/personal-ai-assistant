@@ -100,6 +100,11 @@ const DIRECT_BROWSER_INTENT = /(?:^\s*\[web\]\s*|canvas|b站|哔哩哔哩|bilibi
 const BROWSER_LOOKUP_INTENT = /(?:查一下|查下|查看|看一下|看下|看看|阅读|读一下)[^。！？!?\n]{1,40}上(?:的)?/i;
 const LOCAL_RESOURCE_INTENT = /本地|电脑(?:里|上)?|桌面|文件|文件夹|目录|磁盘|硬盘|项目|工程/i;
 const SCREEN_INTENT = /(?:^\s*\[screen\]\s*|截图|截屏|截(?:个|一个|一下)图|看(?:下|一下|看)?(?:我(?:的)?|当前)?屏幕|我的屏幕|屏幕上|当前画面|电脑上现在|桌面上|看(?:下|一下|看)?(?:我(?:的)?|当前)?桌面|这个窗口|\bscreenshot\b|\bmy\s+screen\b|\bwhat(?:'s|\s+is)\s+on\s+my\s+screen\b)/i;
+const CANVAS_INTENT = /canvas|\b[a-z]{4}\d{4}\b|作业|assignment|\bdue\b|截止|\bproj(?:ect)?\b|\bquiz\b|考试|group\s+assessment/i;
+
+export function needsCanvas(text) {
+  return CANVAS_INTENT.test(String(text ?? ""));
+}
 
 export function needsBrowser(text) {
   const input = String(text ?? "");
@@ -111,9 +116,15 @@ export function needsScreen(text) {
   return SCREEN_INTENT.test(String(text ?? ""));
 }
 
-export function pickCapability({ tier, needsBrowser: browser = false, needsScreen: screen = false } = {}) {
+export function pickCapability({
+  tier,
+  needsCanvas: canvas = false,
+  needsBrowser: browser = false,
+  needsScreen: screen = false
+} = {}) {
   if (tier === TIER.FORBIDDEN) return "deny";
   if (tier === TIER.PRIVILEGED) return "confirm";
+  if (canvas) return "canvas";
   if (browser) return "browse";
   if (screen) return "screen";
   return "assist";
