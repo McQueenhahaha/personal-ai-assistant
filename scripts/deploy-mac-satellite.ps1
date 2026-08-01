@@ -94,6 +94,7 @@ $RemoteDirectories = @(
   "$MacSatelliteRoot/outbox",
   "$MacSatelliteRoot/done",
   "$MacSatelliteRoot/work",
+  "$MacSatelliteRoot/soul",
   "/Users/$MacUser/Library/LaunchAgents"
 )
 

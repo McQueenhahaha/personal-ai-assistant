@@ -153,11 +153,18 @@ Windows 检测到游戏启动 → **不再挂起助手**，而是：
 | 文件 | 为什么关键 |
 |---|---|
 | `openclaw-telegram-bridge-state.json` | 已读消息 key，不同步会重复回复 |
+| `telegram-update-offset.json` | Telegram 拉取位置，不同步会重复拉取或跳过消息 |
 | `chat-history.json` | 最近多轮对话内容，不同步会失忆 |
 | `pending-approvals.json` | 待确认任务 |
 | `canvas-reminders-sent.json` | 提醒去重 |
+| `canvas-token-alert.json` | token 告警去重 |
 | `school-check-state.json` | 学校检查去重 |
-| `data/queues/**` | 任务队列（含未完成任务） |
+| `brain-lease.json` | 大脑持有者、心跳与 TTL，是防脑裂依据 |
+
+### S3 当前切片的已知缺口
+`data/queues/**` 包含未完成任务，最终也必须进入灵魂包；但队列文件多且生产者/消费者可能
+并发改名或写入，本切片先不同步，避免用逐文件 scp 引入半写入、重复消费或覆盖风险。
+队列同步与交接一致性留到后续独立切片实现。
 
 ### 同步策略
 - **只有租约持有者写状态**（天然无并发冲突）
