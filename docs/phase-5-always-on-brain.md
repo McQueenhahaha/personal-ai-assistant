@@ -97,3 +97,102 @@ Outlook 快照同理由卫星推给大脑。细节在 P5.3 出规格。
 - 大脑按任务所需 capability 路由到在线且具备该能力的身体（Windows=Outlook/游戏/维护，
   Mac=电脑控制，派=常开兜底与纯网络活）
 - Mac 仍默认不当大脑（可 become-brain 应急接管）；卫星 agent 与 P5.3 同一套 puller 协议。
+
+---
+
+# P5.5 详细设计（2026-08-01 定稿）— 让助手"一直活着"
+
+## 用户原话（这是需求的本质）
+"我一台电脑关闭了，AI 助手还能运行吗？我在一台电脑游戏的时候，我需要他在另一台电脑
+继续工作，**这才是这个项目的意义**。"
+"我不管这个 ai 到底在哪个电脑搞，我只要任务完成。"
+
+## 现状（诚实评估）
+- 大脑只在 Windows：Windows 关机 = 助手死亡
+- 游戏模式检测到游戏 → **挂起整个助手**（与用户要的"迁移"完全相反）
+- Mac 只是卫星：能接活，但不收 Telegram、不会自主思考
+
+## 目标
+**同一时刻恰有一个"大脑"**，但它能在机器间迁移。用户视角始终是一个助手、
+一个 Telegram、一段连续记忆，**永远不需要知道大脑在哪台机器上**。
+
+## 核心机制：大脑租约（brain lease）
+
+### 为什么需要租约
+Telegram getUpdates 是单消费者：两个大脑同时跑 = 抢消息 + 双重回复（脑裂）。
+必须有且只有一个持有者。
+
+### 租约数据（`data/state/brain-lease.json`，两机各存一份并互相同步）
+```json
+{ "holder": "windows|mac", "heartbeatAt": "ISO", "ttlSeconds": 90, "reason": "startup|handover|takeover" }
+```
+
+### 状态机（每个节点上的 brain-supervisor 每 30 秒跑一次）
+1. 读本地租约 + 尝试从对端拉取租约（Tailscale 可达时）
+2. **我是持有者** → 续约（更新 heartbeatAt）+ 确保大脑服务在跑 + 推状态给对端
+3. **对端是持有者且租约新鲜**（heartbeat 在 TTL 内）→ 我当卫星，确保大脑服务已停
+4. **对端是持有者但租约过期** → 探测对端是否可达：
+   - 可达但没续约 → 说明对端大脑挂了 → **接管**
+   - 不可达（关机/睡眠）→ **连续 N 次（默认 3 次 = 90 秒）都不可达才接管**
+     （防抖，避免网络抖动造成脑裂）
+5. **无人持有** → 抢占（先写先得；两边同时抢时，用节点优先级 windows > mac 打破平局）
+
+### 主动交接（游戏模式的正确行为）
+Windows 检测到游戏启动 → **不再挂起助手**，而是：
+1. 等待在飞任务结束（沿用现有"等任务跑完再停"逻辑）
+2. 推送最新状态到 Mac
+3. 写租约 `{holder: "mac", reason: "handover"}` 并推给 Mac
+4. 停止本机大脑服务（桥 + worker + 定时任务）
+5. Mac 的 supervisor 下一轮发现自己成了持有者 → 启动大脑
+
+游戏结束 → 反向交接（Windows 请求收回；Mac 让出）。
+**用户可见效果**：打游戏时助手照常在 Telegram 回你，只是在 Mac 上跑。
+
+## 灵魂包（共享状态）
+
+### 必须同步的状态（否则会重复处理/丢记忆）
+| 文件 | 为什么关键 |
+|---|---|
+| `openclaw-telegram-bridge-state.json` | 已读消息 key，不同步会重复回复 |
+| `telegram-chat-session.json` | 多轮对话会话 id，不同步会失忆 |
+| `pending-approvals.json` | 待确认任务 |
+| `canvas-reminders-sent.json` | 提醒去重 |
+| `school-check-state.json` | 学校检查去重 |
+| `data/queues/**` | 任务队列（含未完成任务） |
+
+### 同步策略
+- **只有租约持有者写状态**（天然无并发冲突）
+- 持有者每次续约时把状态推给对端（rsync over Tailscale/SSH，增量）
+- 交接前强制推一次（保证接管方拿到最新）
+- 接管方启动大脑前先从本地已同步的副本读取
+
+### 不同步的
+`.env`（各机一份，内容可不同）、日志、浏览器 profile（Windows 专属）、
+`data/browser-profile`（太大且机器相关）
+
+## Mac 成为完整大脑的前提
+| 需要 | 现状 |
+|---|---|
+| 代码 | ❌ 需部署（**用 Tailscale 上的 git over SSH 从 Windows 拉，避免 Mac 做 GitHub 认证**） |
+| Node/claude | ✅ 已装且已登录 |
+| `.env`（TG token/Canvas token 等） | ❌ 需安全拷贝（scp，权限 600） |
+| Telegram 桥能跑 | ⚠️ 现在桥依赖 OpenClaw 网关写的消息文件 —— **Mac 上没有 OpenClaw** |
+
+### ⚠️ 关键阻塞点：桥的消息来源
+当前桥**轮询 OpenClaw 写出的消息文件**，而 OpenClaw 只在 Windows。
+Mac 当大脑就收不到消息。
+**解法（必做）**：把桥改成**直接 Telegram getUpdates**（phase-4 早前设计过、当时因
+"切换有风险"推迟）。现在必须做了 —— 这也顺带让 OpenClaw 彻底退休。
+getUpdates 的单消费者约束正好由 brain-lease 保证。
+
+## 实施切片
+- **S1 桥直连 Telegram**（前置，最高风险）：桥自己 getUpdates + offset 持久化；
+  OpenClaw 退出 Telegram 链路。切换需用户在场（可回滚）。
+- **S2 租约核心**：brain-lease.json + supervisor 状态机（纯函数可测）+ 本机
+  大脑服务启停。先只在 Windows 跑（单节点也应正常工作）。
+- **S3 状态同步**：rsync/scp 推拉 + 交接前强制同步。
+- **S4 Mac 成为大脑**：部署代码/.env/LaunchAgent supervisor；实测 Windows 关机后
+  Mac 接管。
+- **S5 游戏模式改造**：从"挂起"改为"交接给 Mac"；游戏结束后收回。
+
+每片独立可用、可回滚。S1 之前助手行为不变。
