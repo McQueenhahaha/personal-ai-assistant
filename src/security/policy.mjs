@@ -53,6 +53,18 @@ const FORBIDDEN_RULES = [
   }
 ];
 
+const GUI_CONTROL_PATTERNS = [
+  /点击|点一下|拖拽|拖动|鼠标操作|移动(?:鼠标|光标)|键盘注入|模拟按键|输入|键入|打字|填写|填入|勾选|取消勾选|按(?:下)?[^。；;\n]*(?:按键|键|回车|Enter|Tab|Escape)/i,
+  /(?:在|用)[^。；;\n]{0,40}(?:应用|软件|App|程序)(?:里|中|上)?[^。；;\n]{0,40}(?:操作|操控|使用|打开|启动|运行|填写|处理|做)/i,
+  /(?:帮我)?在\s*[^。；;\n]{1,30}(?:里|中|上)\s*(?:裁(?:个|一张)?图|裁剪|修图|画图|制作|填写|填入|点击|拖拽|拖动|选择|勾选|操作|操控)/i,
+  /\b(?:click|drag|drop|move\s+the\s+(?:mouse|cursor)|mouse\s+click|keyboard\s+injection|inject\s+keystrokes?|fill(?:\s+in|\s+out)?|press\s+(?:the\s+)?(?:key|enter|tab|escape|esc))\b/i,
+  /\b(?:select|choose|check|uncheck)\b[^.\n]{0,20}\b(?:box|checkbox|dropdown|field|item|menu|option)\b/i,
+  /^\s*(?:please\s+)?(?:type|enter)\s+\S+|\b(?:type|enter)\b[^.\n]*(?:into|text\s*field|input\s*box)/i,
+  /\b(?:in|using)\b[^.\n]{0,40}\b(?:app|application|software|program)\b[^.\n]{0,40}\b(?:do|make|edit|crop|operate|control|fill|click|type)\b/i,
+  /\b(?:operate|control|use)\b[^.\n]{0,30}\b(?:app|application|software|program)\b/i,
+  /\b(?:[Cc]rop|[Ee]dit|[Rr]esize|[Dd]raw|[Dd]esign)\b[^.\n]{0,40}\b(?:in|using)\s+[A-Z][\w.-]*/
+];
+
 const PRIVILEGED_RULES = [
   {
     reason: "安装或卸载软件",
@@ -86,19 +98,8 @@ const PRIVILEGED_RULES = [
     ]
   },
   {
-    reason: "点击鼠标或注入键盘输入",
-    patterns: [
-      /点击|点一下|鼠标操作|移动(?:鼠标|光标)|键盘注入|模拟按键|输入|键入|打字|按(?:下)?[^。；;\n]*(?:按键|键|回车|Enter|Tab|Escape)/i,
-      /\b(?:click|move\s+the\s+(?:mouse|cursor)|mouse\s+click|keyboard\s+injection|inject\s+keystrokes?|press\s+(?:the\s+)?(?:key|enter|tab|escape|esc))\b|^\s*(?:please\s+)?(?:type|enter)\s+\S+|\b(?:type|enter)\b[^.\n]*(?:into|text\s*field|input\s*box)/i
-    ]
-  },
-  {
-    reason: "通过 Mac 或桌面应用进行 GUI 操作",
-    patterns: [
-      /(?:在|用)\s*(?:我的\s*)?(?:Mac(?:Book)?|iMac|苹果电脑|笔记本)(?:\s*上)?[^。；;\n]{0,40}(?:操作|操控|使用|打开|启动|运行|用)[^。；;\n]{0,30}(?:应用|软件|App|程序)/i,
-      /(?:打开|启动)[^。；;\n]{1,40}(?:应用|软件|App|程序)[^。；;\n]{0,20}(?:并|然后)?\s*(?:操作|操控|使用|做|处理)/i,
-      /\b(?:on|using)\b[^.\n]{0,10}\b(?:mac(?:book)?|imac|macos)\b[^.\n]{0,40}\b(?:use|operate|control|open|launch)\b[^.\n]{0,40}\b(?:app|application|software|program)\b/i
-    ]
+    reason: "点击鼠标、注入键盘或操控桌面应用",
+    patterns: GUI_CONTROL_PATTERNS
   }
 ];
 
@@ -109,7 +110,6 @@ const BROWSER_LOOKUP_INTENT = /(?:查一下|查下|查看|看一下|看下|看�
 const LOCAL_RESOURCE_INTENT = /本地|电脑(?:里|上)?|桌面|文件|文件夹|目录|磁盘|硬盘|项目|工程/i;
 const SCREEN_INTENT = /(?:^\s*\[screen\]\s*|截图|截屏|截(?:个|一个|一下)图|看(?:下|一下|看)?(?:我(?:的)?|当前)?屏幕|我的屏幕|屏幕上|当前画面|电脑上现在|桌面上|看(?:下|一下|看)?(?:我(?:的)?|当前)?桌面|这个窗口|\bscreenshot\b|\bmy\s+screen\b|\bwhat(?:'s|\s+is)\s+on\s+my\s+screen\b)/i;
 const CANVAS_INTENT = /canvas|\b[a-z]{4}\d{4}\b|作业|assignment|\bdue\b|截止|\bproj(?:ect)?\b|\bquiz\b|考试|group\s+assessment/i;
-const MAC_INTENT = /(?:^\s*\[mac\]\s*|\bmac(?:book)?\b|\bmac\s*os\b|\bmacos\b|\bimac\b|我的笔记本|苹果电脑|在\s*mac(?:book)?\s*上|mac(?:book)?\s*上的?)/i;
 
 export function needsCanvas(text) {
   return CANVAS_INTENT.test(String(text ?? ""));
@@ -125,20 +125,21 @@ export function needsScreen(text) {
   return SCREEN_INTENT.test(String(text ?? ""));
 }
 
-export function needsMac(text) {
-  return MAC_INTENT.test(String(text ?? ""));
+export function needsGuiControl(text) {
+  const input = String(text ?? "");
+  return GUI_CONTROL_PATTERNS.some((pattern) => pattern.test(input));
 }
 
 export function pickCapability({
   tier,
-  needsMac: mac = false,
+  guiControl = false,
   needsCanvas: canvas = false,
   needsBrowser: browser = false,
   needsScreen: screen = false
 } = {}) {
   if (tier === TIER.FORBIDDEN) return "deny";
   if (tier === TIER.PRIVILEGED) return "confirm";
-  if (mac) return "mac";
+  if (guiControl) return "gui-control";
   if (canvas) return "canvas";
   if (browser) return "browse";
   if (screen) return "screen";

@@ -123,14 +123,19 @@ async function summarizeStatus() {
   const codexInbox = process.env.CODEX_QUEUE_INBOX || "./data/queues/codex/inbox";
   ensureQueue(localInbox);
   ensureQueue(codexInbox);
-  let macStatus;
+  let guiControlStatus;
   try {
     const health = await macSatelliteHealth();
-    macStatus = health.online && health.agentRunning
-      ? "Mac 卫星：在线（代理运行中）"
-      : `Mac 卫星：离线${health.error ? `（${health.error}）` : ""}`;
+    if (health.online && health.agentRunning) {
+      guiControlStatus = "图形操控：可用（MacBook 在线）";
+    } else {
+      const macDetail = health.online
+        ? "MacBook 在线，但卫星代理未运行"
+        : `MacBook 当前离线${health.error ? `：${health.error}` : ""}`;
+      guiControlStatus = `图形操控：可用（这台电脑可代劳；${macDetail}）`;
+    }
   } catch (error) {
-    macStatus = `Mac 卫星：离线（${error.message || String(error)}）`;
+    guiControlStatus = `图形操控：可用（这台电脑可代劳；MacBook 状态探测失败：${error.message || String(error)}）`;
   }
   return [
     "AI 助手状态",
@@ -139,7 +144,9 @@ async function summarizeStatus() {
     "",
     `Local 队列待处理：${listPendingTasks(localInbox).length}`,
     `Codex 队列待处理：${listPendingTasks(codexInbox).length}`,
-    macStatus
+    "Canvas / Outlook / 系统维护：可用",
+    "文件 / 浏览器 / 屏幕 / Codex：可用",
+    guiControlStatus
   ].join("\n");
 }
 
@@ -230,11 +237,12 @@ function createRemoteLocalTask(text) {
   });
 }
 
-function createChatTask(text) {
+function createChatTask(text, { forcedNodeId } = {}) {
+  const prompt = forcedNodeId ? `[force-node:${forcedNodeId}] ${text}` : text;
   return createTask({
     inboxPath: process.env.CODEX_QUEUE_INBOX || "./data/queues/codex/inbox",
     title: text.slice(0, 60) || "Telegram 提问",
-    prompt: text,
+    prompt,
     taskType: "telegram-chat",
     source: "openclaw-telegram-bridge",
     priority: "normal"
@@ -242,9 +250,10 @@ function createChatTask(text) {
 }
 
 function createApprovedPrivilegedTask(entry) {
+  const title = entry.prompt.replace(/^\s*\[force-node:(?:mac|windows)\]\s*/i, "");
   const file = createTask({
     inboxPath: process.env.CODEX_QUEUE_INBOX || "./data/queues/codex/inbox",
-    title: entry.prompt.slice(0, 60) || "已批准的特权任务",
+    title: title.slice(0, 60) || "已批准的特权任务",
     prompt: entry.prompt,
     taskType: "approved-privileged",
     source: "openclaw-telegram-bridge",
@@ -271,7 +280,7 @@ async function handleCommand({ token, chatId, text, dryRun }) {
       "/status - 查看助手状态",
       "/web <任务> - 用只读浏览器查看网页",
       "/screen [说明] - 查看当前电脑屏幕",
-      "/mac <任务> - 交给 Mac 卫星的 Codex 执行",
+      "/mac <任务> - 调试时强制指定 Mac（一般不需要用）",
       "/codex <任务> - 让 Codex 修改/维护本项目",
       "/study <主题> - 蒸馏课程主题，生成学习文档",
       "/local <任务> - 交给本地 Ollama 队列",
@@ -495,11 +504,11 @@ async function handleCommand({ token, chatId, text, dryRun }) {
 
   if (command === "/mac") {
     if (!rest) {
-      await send(token, chatId, "用法：/mac 要交给 Mac 卫星执行的任务", dryRun);
+      await send(token, chatId, "用法：/mac <任务>（调试时强制指定 Mac，一般不需要用）", dryRun);
       return true;
     }
-    createChatTask(`[mac] ${rest}`);
-    await send(token, chatId, "💻 收到，正在交给 Mac 卫星处理…", dryRun);
+    createChatTask(rest, { forcedNodeId: "mac" });
+    await send(token, chatId, "💻 收到，正在按调试指定处理…", dryRun);
     return true;
   }
 

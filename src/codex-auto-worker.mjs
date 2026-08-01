@@ -12,13 +12,14 @@ import {
 } from "./canvas/api.mjs";
 import { sendCanvasUnauthorizedAlert } from "./canvas/token-alert.mjs";
 import { dispatchToMac } from "./satellite/mac.mjs";
+import { pickNode } from "./satellite/registry.mjs";
 import { appendAudit } from "./security/audit.mjs";
 import { createApproval } from "./security/pending.mjs";
 import {
   classifyTask,
   needsBrowser,
   needsCanvas,
-  needsMac,
+  needsGuiControl,
   needsScreen,
   pickCapability,
   TIER
@@ -40,6 +41,46 @@ function boolEnv(name, fallback = false) {
 
 function codexEntrypoint(root) {
   return path.join(root, "node_modules", "@openai", "codex", "bin", "codex.js");
+}
+
+const FORCE_NODE_DIRECTIVE = /^\s*\[force-node:(mac|windows)\]\s*/i;
+const OUTLOOK_INTENT = /\boutlook\b|微软(?:邮箱|邮件)|学校邮箱/i;
+const NODE_CAPABILITY_BY_ROUTE = {
+  assist: "codex",
+  browse: "browser",
+  screen: "screen",
+  canvas: "canvas",
+  "gui-control": "gui-control"
+};
+
+function routingPrompt(text) {
+  const input = String(text ?? "");
+  const match = input.match(FORCE_NODE_DIRECTIVE);
+  return {
+    forcedNodeId: match?.[1]?.toLowerCase() || null,
+    prompt: match ? input.slice(match[0].length) : input
+  };
+}
+
+function nodeCapabilityFor(task, route) {
+  if (task.taskType === "remote-maintenance") return "maintenance";
+  if (OUTLOOK_INTENT.test(task.prompt)) return "outlook";
+  return NODE_CAPABILITY_BY_ROUTE[route] || "codex";
+}
+
+function unavailableNodeMessage(capability, reason) {
+  if (capability === "gui-control") {
+    return "这个任务需要图形界面操控，但 MacBook 卫星当前离线（可能合盖睡眠），这台电脑也暂时不可用。请唤醒 MacBook 或稍后再试。";
+  }
+  const labels = {
+    browser: "浏览器",
+    canvas: "Canvas",
+    codex: "Codex",
+    maintenance: "系统维护",
+    outlook: "Outlook",
+    screen: "屏幕查看"
+  };
+  return `这个任务需要${labels[capability] || capability}能力，但当前没有可用节点。${reason || "请稍后再试。"}`;
 }
 
 export function takeScreenshot(root = projectRoot(), spawnSyncImpl = spawnSync) {
@@ -529,7 +570,13 @@ function runCodexExec({ root, prompt, taskStem, onProgress }) {
 
 export async function processCodexAutoQueue({
   notify = true,
-  dispatchToMac: dispatchMac = dispatchToMac
+  dispatchToMac: dispatchMac = dispatchToMac,
+  pickNode: selectNode = pickNode,
+  nodeProbe,
+  runClaudeChat: runChat = runClaudeChat,
+  runCanvasChat: runCanvas = runCanvasChat,
+  runScreenChat: runScreen = runScreenChat,
+  runCodexExec: runCodex = runCodexExec
 } = {}) {
   loadEnv();
 
@@ -567,19 +614,27 @@ export async function processCodexAutoQueue({
       let task;
       try {
         task = readTask(claimed);
+        const routedPrompt = routingPrompt(task.prompt);
+        const executionTask = routedPrompt.prompt === task.prompt
+          ? task
+          : { ...task, prompt: routedPrompt.prompt };
         const isChat = task.taskType === "telegram-chat";
         const isStudy = task.taskType === "study-distill";
         const isApprovedPrivileged = task.taskType === "approved-privileged";
-        const classification = isChat || isApprovedPrivileged ? classifyTask(task.prompt) : null;
-        const chatRoute = isChat
+        const classification = isChat || isApprovedPrivileged ? classifyTask(executionTask.prompt) : null;
+        const capability = isChat || isApprovedPrivileged
           ? pickCapability({
-              tier: classification.tier,
-              needsMac: needsMac(task.prompt),
-              needsCanvas: needsCanvas(task.prompt),
-              needsBrowser: needsBrowser(task.prompt),
-              needsScreen: needsScreen(task.prompt)
+              tier: isApprovedPrivileged && classification.tier === TIER.PRIVILEGED
+                ? TIER.SANDBOX
+                : classification.tier,
+              guiControl: needsGuiControl(executionTask.prompt),
+              needsCanvas: needsCanvas(executionTask.prompt),
+              needsBrowser: needsBrowser(executionTask.prompt),
+              needsScreen: needsScreen(executionTask.prompt)
             })
-          : null;
+          : task.taskType === "remote-maintenance"
+            ? "maintenance"
+            : "codex";
         if (
           notify &&
           !isChat &&
@@ -596,26 +651,26 @@ export async function processCodexAutoQueue({
             kind: isApprovedPrivileged ? "approved-privileged" : "policy",
             tier: classification.tier,
             reason: classification.reason,
-            promptPreview: task.prompt,
+            promptPreview: executionTask.prompt,
             result: "denied",
             approvalId: task.metadata?.approvalId
           });
           execution = {
             result: `这个请求涉及不可逆/高风险操作，我不会执行。原因：${classification.reason}`
           };
-        } else if (isChat && chatRoute === "confirm") {
+        } else if (isChat && capability === "confirm") {
           const approval = createApproval({
             prompt: task.prompt,
             tier: classification.tier,
             reason: classification.reason
           });
           const ttlMinutes = Math.ceil((approval.expiresAtMs - approval.createdAtMs) / 60000);
-          const promptPreview = redactSensitive(oneLine(task.prompt)).slice(0, 120);
+          const promptPreview = redactSensitive(oneLine(executionTask.prompt)).slice(0, 120);
           appendAudit({
             kind: "approval",
             tier: classification.tier,
             reason: classification.reason,
-            promptPreview: task.prompt,
+            promptPreview: executionTask.prompt,
             result: "pending",
             approvalId: approval.id
           });
@@ -632,74 +687,95 @@ export async function processCodexAutoQueue({
           };
         } else if (isStudy) {
           execution = { result: await runClaudeText(buildPrompt(task, root), { timeoutMs: 600000 }) };
-        } else if (
-          (isChat && chatRoute === "mac") ||
-          (isApprovedPrivileged && needsMac(task.prompt))
-        ) {
-          const macResult = await dispatchMac({
-            prompt: task.prompt,
-            kind: isApprovedPrivileged ? "mac-computer-use" : "mac-general"
-          });
-          if (!macResult.ok) {
-            throw new Error(`Mac 卫星执行失败：${macResult.error || "未提供失败原因"}`);
-          }
-          execution = { result: macResult.result || "Mac 卫星任务已完成。" };
-          appendAudit({
-            kind: "mac",
-            tier: classification.tier,
-            reason: classification.reason,
-            promptPreview: task.prompt,
-            result: "executed",
-            approvalId: task.metadata?.approvalId
-          });
-        } else if (isChat && chatRoute === "canvas") {
-          execution = await runCanvasChat(task, root);
-          appendAudit({
-            kind: "canvas",
-            tier: classification.tier,
-            reason: classification.reason,
-            promptPreview: task.prompt,
-            result: "executed"
-          });
-        } else if (isChat && chatRoute === "screen") {
-          execution = await runScreenChat(task, root);
-          appendAudit({
-            kind: "screen",
-            tier: classification.tier,
-            reason: classification.reason,
-            promptPreview: task.prompt,
-            result: execution.screenshotFailed ? "screenshot-failed" : "executed"
-          });
-        } else if (isChat) {
-          const capability = chatRoute;
-          execution = { result: await runClaudeChat(buildPrompt(task, root), { capability }) };
-          appendAudit({
-            kind: capability,
-            tier: classification.tier,
-            reason: classification.reason,
-            promptPreview: task.prompt,
-            result: "executed"
-          });
         } else {
-          execution = await runCodexExec({
-            root,
-            prompt: buildPrompt(task, root),
-            taskStem,
-            onProgress: async ({ elapsedSeconds, jsonLogFile }) => {
-              if (notify && notifyStatusUpdates && !isChat && !isStudy) {
-                await sendTelegramMessage(buildProgressMessage({ task, elapsedSeconds, jsonLogFile }));
-              }
+          const nodeCapability = nodeCapabilityFor(executionTask, capability);
+          const selection = routedPrompt.forcedNodeId
+            ? { nodeId: routedPrompt.forcedNodeId, reason: "/mac 调试强制指定" }
+            : await selectNode(nodeCapability, nodeProbe ? { probe: nodeProbe } : {});
+
+          if (!selection.nodeId) {
+            execution = {
+              result: unavailableNodeMessage(nodeCapability, selection.reason)
+            };
+            if (classification) {
+              appendAudit({
+                kind: nodeCapability,
+                tier: classification.tier,
+                reason: selection.reason,
+                promptPreview: executionTask.prompt,
+                result: "node-unavailable",
+                approvalId: task.metadata?.approvalId
+              });
             }
-          });
-          if (isApprovedPrivileged) {
+          } else if (selection.nodeId === "mac") {
+            const macResult = await dispatchMac({
+              prompt: executionTask.prompt,
+              kind: capability === "gui-control" && isApprovedPrivileged
+                ? "mac-computer-use"
+                : "mac-general"
+            });
+            if (!macResult.ok) {
+              throw new Error(`Mac 卫星执行失败：${macResult.error || "未提供失败原因"}`);
+            }
+            execution = { result: macResult.result || "任务已完成。" };
+            if (classification) {
+              appendAudit({
+                kind: capability,
+                tier: classification.tier,
+                reason: classification.reason,
+                promptPreview: executionTask.prompt,
+                result: "executed",
+                approvalId: task.metadata?.approvalId
+              });
+            }
+          } else if (isChat && capability === "canvas") {
+            execution = await runCanvas(executionTask, root);
             appendAudit({
-              kind: "approved-privileged",
+              kind: "canvas",
               tier: classification.tier,
               reason: classification.reason,
-              promptPreview: task.prompt,
-              result: "executed",
-              approvalId: task.metadata?.approvalId
+              promptPreview: executionTask.prompt,
+              result: "executed"
             });
+          } else if (isChat && capability === "screen") {
+            execution = await runScreen(executionTask, root);
+            appendAudit({
+              kind: "screen",
+              tier: classification.tier,
+              reason: classification.reason,
+              promptPreview: executionTask.prompt,
+              result: execution.screenshotFailed ? "screenshot-failed" : "executed"
+            });
+          } else if (isChat) {
+            execution = { result: await runChat(buildPrompt(executionTask, root), { capability }) };
+            appendAudit({
+              kind: capability,
+              tier: classification.tier,
+              reason: classification.reason,
+              promptPreview: executionTask.prompt,
+              result: "executed"
+            });
+          } else {
+            execution = await runCodex({
+              root,
+              prompt: buildPrompt(executionTask, root),
+              taskStem,
+              onProgress: async ({ elapsedSeconds, jsonLogFile }) => {
+                if (notify && notifyStatusUpdates && !isChat && !isStudy) {
+                  await sendTelegramMessage(buildProgressMessage({ task, elapsedSeconds, jsonLogFile }));
+                }
+              }
+            });
+            if (isApprovedPrivileged) {
+              appendAudit({
+                kind: "approved-privileged",
+                tier: classification.tier,
+                reason: classification.reason,
+                promptPreview: executionTask.prompt,
+                result: "executed",
+                approvalId: task.metadata?.approvalId
+              });
+            }
           }
         }
         const outFile = writeResult({ inboxPath, taskFile: claimed, task, result: execution.result });

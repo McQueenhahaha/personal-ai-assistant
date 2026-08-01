@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { classifyTask, needsBrowser, needsScreen, pickCapability, TIER } from "../src/security/policy.mjs";
+import { classifyTask, needsBrowser, needsGuiControl, needsScreen, pickCapability, TIER } from "../src/security/policy.mjs";
 
 test("needsScreen recognizes Chinese screen intents", () => {
   assert.equal(needsScreen("帮我截图看看"), true);
@@ -27,9 +27,10 @@ test("screen viewing is classified as T1 while input remains T2", () => {
   assert.equal(classifyTask("Type hello into Notepad").tier, TIER.PRIVILEGED);
 });
 
-test("pickCapability enforces T3, T2, browser, screen, assist priority", () => {
-  assert.equal(pickCapability({ tier: TIER.FORBIDDEN, needsBrowser: true, needsScreen: true }), "deny");
-  assert.equal(pickCapability({ tier: TIER.PRIVILEGED, needsBrowser: true, needsScreen: true }), "confirm");
+test("pickCapability enforces T3, T2, GUI, browser, screen, assist priority", () => {
+  assert.equal(pickCapability({ tier: TIER.FORBIDDEN, guiControl: true, needsBrowser: true, needsScreen: true }), "deny");
+  assert.equal(pickCapability({ tier: TIER.PRIVILEGED, guiControl: true, needsBrowser: true, needsScreen: true }), "confirm");
+  assert.equal(pickCapability({ tier: TIER.SANDBOX, guiControl: true, needsBrowser: true, needsScreen: true }), "gui-control");
   assert.equal(pickCapability({ tier: TIER.READONLY, needsBrowser: true, needsScreen: true }), "browse");
   assert.equal(pickCapability({ tier: TIER.READONLY, needsScreen: true }), "screen");
   assert.equal(pickCapability({ tier: TIER.SANDBOX }), "assist");
@@ -53,6 +54,7 @@ test("real intent combinations select screen, browse, and T2 confirmation", () =
   const clickText = "点击确认按钮";
   assert.equal(pickCapability({
     tier: TIER.PRIVILEGED,
+    guiControl: needsGuiControl(clickText),
     needsBrowser: needsBrowser(clickText),
     needsScreen: needsScreen(clickText)
   }), "confirm");
