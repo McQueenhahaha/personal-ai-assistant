@@ -28,7 +28,7 @@ test("reportConfig marks configured features as online", () => {
       detail: "在线 ✓，模型 qwen3:8b，OpenAI fallback 已配置"
     },
     {
-      feature: "学校邮件(Outlook/RMIT)",
+      feature: "学校邮件(Outlook)",
       ok: true,
       detail: "已配置 ✓，drop dir ./tmp/school"
     },
@@ -49,7 +49,7 @@ test("reportConfig marks configured features as online", () => {
     [
       "[config] Telegram 通知: 在线 ✓",
       "[config] AI 摘要(本地 Ollama): 在线 ✓，模型 qwen3:8b，OpenAI fallback 已配置",
-      "[config] 学校邮件(Outlook/RMIT): 已配置 ✓，drop dir ./tmp/school",
+      "[config] 学校邮件(Outlook): 已配置 ✓，drop dir ./tmp/school",
       "[config] 个人邮件(Gmail): 已配置 ✓",
       "[config] Codex 队列 worker: 启用 ✓，inbox ./tmp/codex-inbox"
     ].join("\n")
@@ -81,7 +81,7 @@ test("reportConfig marks missing optional config as degraded without throwing", 
       detail: "降级 → 确定性摘要，OpenAI fallback 未配置"
     },
     {
-      feature: "学校邮件(Outlook/RMIT)",
+      feature: "学校邮件(Outlook)",
       ok: false,
       detail: "未配置定时学校检查"
     },

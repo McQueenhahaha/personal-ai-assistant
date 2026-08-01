@@ -14,7 +14,7 @@ $obsoleteShortcuts = @(
   "Disable Codex Admin Startup.lnk",
   "AI Assistant - Enable Admin Startup.lnk",
   "AI Assistant - Disable Admin Startup.lnk",
-  "Export RMIT Mail Snapshot.lnk"
+  "Export School Mail Snapshot.lnk"
 )
 
 foreach ($name in $obsoleteShortcuts) {

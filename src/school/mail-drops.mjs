@@ -41,7 +41,7 @@ export function schoolMessagesFromDrops(maxFiles) {
 
   const messages = [];
   for (const drop of drops) {
-    if (path.basename(drop.file).startsWith("outlook-rmit-snapshot-")) {
+    if (/^outlook-[^-]+-snapshot-/i.test(path.basename(drop.file))) {
       messages.push(...parseOutlookSnapshot(drop.file));
     } else {
       messages.push({

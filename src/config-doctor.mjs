@@ -41,7 +41,7 @@ export function reportConfig(env = process.env) {
         : `降级 → 确定性摘要，${fallbackStatus(env)}`
     },
     {
-      feature: "学校邮件(Outlook/RMIT)",
+      feature: "学校邮件(Outlook)",
       ok: schoolTimesReady,
       detail: schoolTimesReady ? `已配置 ✓，drop dir ${schoolDropDir}` : "未配置定时学校检查"
     },

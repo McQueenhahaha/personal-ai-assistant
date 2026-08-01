@@ -21,8 +21,8 @@ Register-ScheduledTask `
   -Action $Action `
   -Trigger $Trigger `
   -Settings $Settings `
-  -Description "Checks RMIT school mail at configured Australia/Melbourne times and sends deadline reminders." `
+  -Description "Checks school mail at configured times and sends deadline reminders." `
   -Force | Out-Null
 
 Write-Host "Registered scheduled task: $TaskName"
-Write-Host "The script checks Australia/Melbourne time internally."
+Write-Host "The script uses SCHOOL_TIMEZONE from .env (default: UTC)."

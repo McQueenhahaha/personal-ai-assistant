@@ -77,13 +77,13 @@ test("parseGmailSnapshot keeps current TSV parsing and skip rules", () => {
 test("parseOutlookSnapshot keeps current section parsing and empty-source behavior", () => {
   const message = {
     category: "school",
-    file: "outlook-rmit-snapshot-20260624.md",
+    file: "outlook-school-snapshot-20260624.md",
     date: "fallback-date",
     body: [
       "# Outlook Snapshot",
       "",
       "## Assignment 1 due",
-      "- From: RMIT Canvas <canvas@example.edu>",
+      "- From: School Canvas <canvas@example.edu>",
       "- Received: Wed, 24 Jun 2026 10:00:00 +1000",
       "",
       "Submit your assignment.",
@@ -102,16 +102,16 @@ test("parseOutlookSnapshot keeps current section parsing and empty-source behavi
   assert.deepEqual(parseOutlookSnapshot(message), [
     {
       category: "school",
-      file: "outlook-rmit-snapshot-20260624.md",
+      file: "outlook-school-snapshot-20260624.md",
       subject: "Assignment 1 due",
-      from: "RMIT Canvas <canvas@example.edu>",
+      from: "School Canvas <canvas@example.edu>",
       date: "Wed, 24 Jun 2026 10:00:00 +1000",
-      key: "school|wed, 24 jun 2026 10:00:00 +1000|rmit canvas <canvas@example.edu>|assignment 1 due",
+      key: "school|wed, 24 jun 2026 10:00:00 +1000|school canvas <canvas@example.edu>|assignment 1 due",
       body: "Submit your assignment."
     },
     {
       category: "school",
-      file: "outlook-rmit-snapshot-20260624.md",
+      file: "outlook-school-snapshot-20260624.md",
       subject: "Missing metadata notice",
       from: "unknown sender",
       date: "fallback-date",
@@ -135,11 +135,11 @@ test("normalizeMailMessages expands snapshots, keeps ordinary mail, dedupes, fil
   };
   const outlookSnapshot = {
     category: "school",
-    file: "outlook-rmit-snapshot-20260624.md",
+    file: "outlook-school-snapshot-20260624.md",
     date: "fallback-date",
     body: [
       "## Assignment 1 due",
-      "- From: RMIT Canvas <canvas@example.edu>",
+      "- From: School Canvas <canvas@example.edu>",
       "- Received: 2026-06-24T00:30:00Z",
       "",
       "Submit your assignment."
@@ -189,11 +189,11 @@ test("normalizeMailMessages expands snapshots, keeps ordinary mail, dedupes, fil
     },
     {
       category: "school",
-      file: "outlook-rmit-snapshot-20260624.md",
+      file: "outlook-school-snapshot-20260624.md",
       subject: "Assignment 1 due",
-      from: "RMIT Canvas <canvas@example.edu>",
+      from: "School Canvas <canvas@example.edu>",
       date: "2026-06-24T00:30:00Z",
-      key: "school|2026-06-24t00:30:00z|rmit canvas <canvas@example.edu>|assignment 1 due",
+      key: "school|2026-06-24t00:30:00z|school canvas <canvas@example.edu>|assignment 1 due",
       body: "Submit your assignment."
     },
     {
@@ -236,7 +236,7 @@ test("normalizeMailMessages falls back to original snapshot messages when parsin
     normalizeMailMessages([
       {
         category: "school",
-        file: "outlook-rmit-snapshot-empty.md",
+        file: "outlook-school-snapshot-empty.md",
         subject: "Outlook snapshot empty",
         from: "Exporter",
         date: "2026-06-21T00:00:00Z",
@@ -246,7 +246,7 @@ test("normalizeMailMessages falls back to original snapshot messages when parsin
     [
       {
         category: "school",
-        file: "outlook-rmit-snapshot-empty.md",
+        file: "outlook-school-snapshot-empty.md",
         subject: "Outlook snapshot empty",
         from: "Exporter",
         date: "2026-06-21T00:00:00Z",

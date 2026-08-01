@@ -14,7 +14,7 @@ const outlookSnapshotLines = [
   "# Outlook Snapshot",
   "",
   "## Assignment 1 due",
-  "- From: RMIT Canvas <canvas@example.edu>",
+  "- From: School Canvas <canvas@example.edu>",
   "- Received: Wed, 24 Jun 2026 10:00:00 +1000",
   "",
   "Submit your assignment.",
@@ -32,7 +32,7 @@ const gmailSnapshotLines = [
   "g-1\t2026-06-24T01:00:00Z\tGoogle Alerts\tSecurity alert\tINBOX",
   "g-2\t2026-06-24T02:00:00Z\tDraft Sender\tDraft subject\tDRAFT,INBOX",
   "bad\tmissing",
-  "g-3\t2026-06-23T23:00:00Z\tRMIT Updates\tCampus note\tINBOX,IMPORTANT",
+  "g-3\t2026-06-23T23:00:00Z\tSchool Updates\tCampus note\tINBOX,IMPORTANT",
   "```"
 ];
 
@@ -77,7 +77,7 @@ function withMailDropEnvAndCwd({ root, schoolDrop, personalDrop }, fn) {
 
 test("Outlook snapshot parsing keeps normal, empty, and missing-field behavior", (t) => {
   const root = makeTempRoot(t);
-  const snapshotFile = path.join(root, "fixtures", "outlook-rmit-snapshot-20260624.md");
+  const snapshotFile = path.join(root, "fixtures", "outlook-school-snapshot-20260624.md");
   const emptyFile = path.join(root, "fixtures", "empty-outlook.md");
   writeFixture(snapshotFile, outlookSnapshotLines);
   writeFixture(emptyFile, []);
@@ -87,10 +87,10 @@ test("Outlook snapshot parsing keeps normal, empty, and missing-field behavior",
       category: "school",
       file: snapshotFile,
       subject: "Assignment 1 due",
-      from: "RMIT Canvas <canvas@example.edu>",
+      from: "School Canvas <canvas@example.edu>",
       date: "Wed, 24 Jun 2026 10:00:00 +1000",
       body: "Submit your assignment.",
-      key: "wed, 24 jun 2026 10:00:00 +1000|rmit canvas <canvas@example.edu>|assignment 1 due"
+      key: "wed, 24 jun 2026 10:00:00 +1000|school canvas <canvas@example.edu>|assignment 1 due"
     },
     {
       category: "school",
@@ -133,7 +133,7 @@ test("Gmail snapshot parsing keeps code block, raw table, draft, and malformed-r
       file: snapshotFile,
       id: "g-3",
       date: "2026-06-23T23:00:00Z",
-      from: "RMIT Updates",
+      from: "School Updates",
       subject: "Campus note",
       labels: "INBOX,IMPORTANT",
       key: "gmail|g-3"
@@ -159,7 +159,7 @@ test("school mail drops keep Outlook compatibility, key dedupe, and current stri
   const schoolDrop = path.join(root, "school-drop");
   const personalDrop = path.join(root, "personal-drop");
   writeFixture(
-    path.join(schoolDrop, "outlook-rmit-snapshot-20260624.md"),
+    path.join(schoolDrop, "outlook-school-snapshot-20260624.md"),
     outlookSnapshotLines,
     new Date("2026-06-24T00:00:00.000Z")
   );
@@ -167,7 +167,7 @@ test("school mail drops keep Outlook compatibility, key dedupe, and current stri
     path.join(schoolDrop, "duplicate-school.eml"),
     [
       "Subject: Assignment 1 due",
-      "From: RMIT Canvas <canvas@example.edu>",
+      "From: School Canvas <canvas@example.edu>",
       "Date: Wed, 24 Jun 2026 10:00:00 +1000",
       "",
       "Duplicate body."
@@ -178,7 +178,7 @@ test("school mail drops keep Outlook compatibility, key dedupe, and current stri
     path.join(schoolDrop, "newer-school.eml"),
     [
       "Subject: Later school update",
-      "From: RMIT Updates <updates@example.edu>",
+      "From: School Updates <updates@example.edu>",
       "Date: Thu, 25 Jun 2026 09:00:00 +1000",
       "",
       "Later body."
@@ -219,37 +219,37 @@ test("school mail drops keep Outlook compatibility, key dedupe, and current stri
       category: "school",
       file: path.join(schoolDrop, "newer-school.eml"),
       subject: "Later school update",
-      from: "RMIT Updates <updates@example.edu>",
+      from: "School Updates <updates@example.edu>",
       date: "Thu, 25 Jun 2026 09:00:00 +1000",
       modifiedAt: "2026-06-24T00:10:00.000Z",
       body: [
         "Subject: Later school update",
-        "From: RMIT Updates <updates@example.edu>",
+        "From: School Updates <updates@example.edu>",
         "Date: Thu, 25 Jun 2026 09:00:00 +1000",
         "",
         "Later body."
       ].join("\n"),
-      key: "thu, 25 jun 2026 09:00:00 +1000|rmit updates <updates@example.edu>|later school update"
+      key: "thu, 25 jun 2026 09:00:00 +1000|school updates <updates@example.edu>|later school update"
     },
     {
       category: "school",
       file: path.join(schoolDrop, "duplicate-school.eml"),
       subject: "Assignment 1 due",
-      from: "RMIT Canvas <canvas@example.edu>",
+      from: "School Canvas <canvas@example.edu>",
       date: "Wed, 24 Jun 2026 10:00:00 +1000",
       modifiedAt: "2026-06-24T00:05:00.000Z",
       body: [
         "Subject: Assignment 1 due",
-        "From: RMIT Canvas <canvas@example.edu>",
+        "From: School Canvas <canvas@example.edu>",
         "Date: Wed, 24 Jun 2026 10:00:00 +1000",
         "",
         "Duplicate body."
       ].join("\n"),
-      key: "wed, 24 jun 2026 10:00:00 +1000|rmit canvas <canvas@example.edu>|assignment 1 due"
+      key: "wed, 24 jun 2026 10:00:00 +1000|school canvas <canvas@example.edu>|assignment 1 due"
     },
     {
       category: "school",
-      file: path.join(schoolDrop, "outlook-rmit-snapshot-20260624.md"),
+      file: path.join(schoolDrop, "outlook-school-snapshot-20260624.md"),
       subject: "Missing fields notice",
       from: "unknown sender",
       date: "",
@@ -348,7 +348,7 @@ test("personal mail drops keep Gmail compatibility, draft and connector skips, d
       file: path.join(personalDrop, "gmail-snapshot-20260624.md"),
       id: "g-3",
       date: "2026-06-23T23:00:00Z",
-      from: "RMIT Updates",
+      from: "School Updates",
       subject: "Campus note",
       labels: "INBOX,IMPORTANT",
       key: "gmail|g-3"

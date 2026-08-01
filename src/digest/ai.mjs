@@ -41,7 +41,7 @@ export function sectionBulletCount(text, section) {
 
 export function digestLooksReasonable(text) {
   if (!text || REQUIRED_SECTIONS.some((section) => !text.includes(section))) return false;
-  if (/\b(?:gmail-snapshot|outlook-rmit-snapshot)-\d{4}/i.test(text)) return false;
+  if (/\b(?:gmail-snapshot|outlook-[^-]+-snapshot)-\d{4}/i.test(text)) return false;
   return REQUIRED_SECTIONS.every((section) => sectionBulletCount(text, section) <= DIGEST_SECTION_LIMIT);
 }
 
@@ -83,22 +83,22 @@ export async function buildDigest({ title, gameNews, mailMessages }) {
   }
 
   const prompt = [
-    "你是 RMIT 学生的个人 AI 助手。必须严格按下面规则输出。",
+    "你是学生的个人 AI 助手。必须严格按下面规则输出。",
     "",
     "硬性规则：",
     "1. 除英文标题、课程名、发件人、链接外，解释和待办必须使用简体中文。",
-    "2. 必须使用固定栏目：RMIT / 学校、个人邮件、游戏资讯、待办。",
+    "2. 必须使用固定栏目：学校、个人邮件、游戏资讯、待办。",
     "3. 不要使用 Markdown 表格，不要写开场白，不要写结尾寒暄。",
     "4. 不要编造输入里没有的游戏、日期、课程或优惠。",
     "5. 邮件优先于游戏资讯；如果有个人邮件，必须总结个人邮件。",
     "6. 每个栏目最多 4 条，每条 1-2 行，适合 Telegram 手机阅读。",
     "7. 不确定就写“不确定”，不要猜。",
-    "8. 输入里的 Gmail/Outlook 快照已经解析成真实邮件；不要输出 gmail-snapshot 或 outlook-rmit-snapshot 文件名。",
+    "8. 输入里的 Gmail/Outlook 快照已经解析成真实邮件；不要输出 gmail-snapshot 或 outlook-<school>-snapshot 文件名。",
     "9. 个人邮件按 Urgent / Needs reply / Waiting / FYI / Noise 取重点；Noise 默认略过或只统计。",
     "10. 待办只能来自账号安全、需要确认/回复、课程截止事项或明确问卷；不要因为旧快照里出现 survey 就猜 Xref。",
     "",
     "输出模板：",
-    "RMIT / 学校",
+    "学校",
     "- ...",
     "",
     "个人邮件",

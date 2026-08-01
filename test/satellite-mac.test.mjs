@@ -213,3 +213,14 @@ test("macSatelliteHealth distinguishes running, stopped, and offline states", as
   assert.equal(disconnectedDuringProcessCheck.online, false);
   assert.match(disconnectedDuringProcessCheck.error, /Connection reset/);
 });
+
+test("macSatelliteHealth reports the placeholder when MAC_SATELLITE_HOST is missing", async () => {
+  const health = await macSatelliteHealth({
+    env: {},
+    homedir: () => HOME
+  });
+
+  assert.equal(health.online, false);
+  assert.match(health.error, /user@100\.x\.y\.z/);
+  assert.match(health.error, /\.env 配置实际的 SSH 目标/);
+});

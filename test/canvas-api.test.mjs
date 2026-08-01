@@ -26,14 +26,14 @@ function fakeCanvas() {
 
     if (url.pathname === "/api/v1/courses" && url.searchParams.get("page") === "2") {
       return jsonResponse([
-        { id: 3, course_code: "MIET2421", name: "Systems Engineering" }
+        { id: 3, course_code: "ENGR2002", name: "Systems Engineering" }
       ]);
     }
     if (url.pathname === "/api/v1/courses") {
       return jsonResponse([
-        { id: 1, course_code: "AERO2356", name: "Aerospace Structures" },
+        { id: 1, course_code: "ENGR1001", name: "Engineering Structures" },
         { id: 2, course_code: "SAFE0001", name: "Laboratory Safety Awareness" },
-        { id: 4, course_code: "RMIT0001", name: "How2RMIT Induction" },
+        { id: 4, course_code: "ORIENT1000", name: "Student Induction" },
         { id: 5, course_code: "BENG", name: "Bachelor of Engineering" },
         { id: 6, course_code: "Consent", name: "Sex and Consent for International Students" }
       ], {
@@ -70,7 +70,7 @@ function fakeCanvas() {
         },
         {
           id: 104,
-          name: "AERO2356 Quiz",
+          name: "ENGR1001 Quiz",
           due_at: "2026-08-25T00:00:00.000Z",
           html_url: "https://canvas.test/courses/1/assignments/104",
           points_possible: 10,
@@ -160,8 +160,8 @@ test("listActiveCourses follows pagination and heuristically removes noise cours
   const { calls, fetchImpl } = fakeCanvas();
 
   assert.deepEqual(await listActiveCourses({ fetchImpl }), [
-    { id: 1, code: "AERO2356", name: "Aerospace Structures" },
-    { id: 3, code: "MIET2421", name: "Systems Engineering" }
+    { id: 1, code: "ENGR1001", name: "Engineering Structures" },
+    { id: 3, code: "ENGR2002", name: "Systems Engineering" }
   ]);
   assert.equal(calls.length, 2);
   assert.equal(calls.every(({ options }) => options.method === "GET"), true);
@@ -176,7 +176,7 @@ test("listUpcomingAssignments sorts, excludes overdue/out-of-window items, and r
   const assignments = await listUpcomingAssignments({ withinDays: 21, nowMs, fetchImpl });
 
   assert.deepEqual(assignments.map(({ id }) => id), [301, 101]);
-  assert.equal(assignments[0].courseCode, "MIET2421");
+  assert.equal(assignments[0].courseCode, "ENGR2002");
   assert.equal(assignments[0].submitted, true);
   assert.equal(assignments[0].pointsPossible, 20);
   assert.equal(assignments[1].submitted, false);
@@ -217,6 +217,6 @@ test("findAssignments matches a natural-language course and assignment query", a
   const outsideWindow = await findAssignments("outside window", { nowMs, fetchImpl });
   assert.equal(outsideWindow[0].id, 103);
 
-  const courseOnly = await findAssignments("AERO2356 最近的作业", { nowMs, fetchImpl });
+  const courseOnly = await findAssignments("ENGR1001 最近的作业", { nowMs, fetchImpl });
   assert.equal(courseOnly[0].id, 101);
 });

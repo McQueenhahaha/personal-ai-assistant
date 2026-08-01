@@ -78,7 +78,7 @@ Remove-OldFiles -Dir (Join-Path $Root "data\logs") -Filter "*" -Days $LogDays
 Remove-OldFiles -Dir (Join-Path $Root "data\tmp") -Filter "*" -Days $TempDays
 Remove-OldFiles -Dir (Join-Path $Root "data\appdata\NVIDIA\ComputeCache") -Filter "*" -Days $ComputeCacheDays
 Remove-OldFiles -Dir (Join-Path $Root "data\digest-archive") -Filter "*.txt" -Days $DigestDays
-Remove-OldFiles -Dir (Join-Path $Root "data\school-mail-drop") -Filter "outlook-rmit-snapshot-*.md" -Days $MailSnapshotDays
+Remove-OldFiles -Dir (Join-Path $Root "data\school-mail-drop") -Filter "outlook-*-snapshot-*.md" -Days $MailSnapshotDays
 Remove-OldFiles -Dir (Join-Path $Root "data\personal-mail-drop") -Filter "gmail-snapshot-*.md" -Days $MailSnapshotDays
 Remove-OldQueueFiles -QueueRoot (Join-Path $Root "data\queues") -DoneDays $QueueDoneDays -FailedDays $QueueFailedDays
 

@@ -40,7 +40,7 @@ These paths are retained for now because the production setup is Windows-first. 
 
 ### Skills and Runtime Prompts
 
-- `skills/rmit-personal-assistant/SKILL.md`: several `D:\AI\personal-ai-assistant\...` queue and script examples
+- `skills/school-personal-assistant/SKILL.md`: several project-root-relative queue and script examples
 - `src/codex-auto-worker.mjs`: prompt text says the default working directory is `D:\AI\personal-ai-assistant`
 - `src/openclaw-telegram-bridge.mjs`: remote-maintenance prompt text says the default working directory is `D:\AI\personal-ai-assistant`
 

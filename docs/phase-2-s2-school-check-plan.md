@@ -26,7 +26,7 @@
 
 | 名称 | 行号范围 | 一句话作用 | 分类 |
 |---|---:|---|---|
-| `DEFAULT_TIME_ZONE` | 9 | 默认学校检查时区，当前为 `Australia/Melbourne`。 | 纯逻辑 |
+| `DEFAULT_TIME_ZONE` | 9 | 默认学校检查时区，当前为 `UTC`。 | 纯逻辑 |
 | `MONTHS` | 10-35 | 英文月份全称/缩写到月份数字的映射。 | 纯逻辑 |
 | `hasArg(name)` | 37-39 | 判断当前 CLI 参数中是否包含某个 flag。 | 外部依赖(process.argv) |
 | `statePath()` | 41-43 | 返回 school-check 状态文件路径。 | 外部依赖(文件路径) |
@@ -37,7 +37,7 @@
 | `minutesInZone(date, timeZone)` | 112-115 | 计算指定时区当天已过分钟数。 | 纯逻辑 |
 | `parseClock(value)` | 117-124 | 解析 `HH:mm` 字符串并归一化 label/分钟数。 | 纯逻辑 |
 | `dueSlots({ now, timeZone, times, graceMinutes, state })` | 126-142 | 根据当前时间、配置时间和已完成 slot 状态计算本轮到期 slot。 | 纯逻辑 |
-| `runOutlookExport({ days, maxMessages, syncWaitSeconds })` | 144-172 | 调用 `scripts/export-outlook-mail.ps1` 导出 Outlook/RMIT 邮件。 | 外部依赖(Outlook/PowerShell) |
+| `runOutlookExport({ days, maxMessages, syncWaitSeconds })` | 144-172 | 调用 `scripts/export-outlook-mail.ps1` 导出学校 Outlook 邮件。 | 外部依赖(Outlook/PowerShell) |
 | `runGmailExport({ maxMessages, query, account })` | 174-199 | 调用 `scripts/export-gmail-mail.ps1` 导出 Gmail 邮件。 | 外部依赖(Gmail/PowerShell) |
 | `parseField(block, name)` | 201-204 | 从 markdown 块中解析 `- Name: value` 字段。 | 纯逻辑 |
 | `parseOutlookSnapshot(file)` | 206-233 | 读取 Outlook snapshot markdown 并转成 school message 列表。 | 外部依赖(文件) |
@@ -54,7 +54,7 @@
 | `classifyPersonalMessage(message)` | 411-437 | 根据 subject/from/labels 正则把个人邮件分类并标记是否重要。 | 纯逻辑 |
 | `translatePersonalSubject(subject)` | 439-450 | 对已知个人邮件 subject 做中文化和转发前缀处理。 | 纯逻辑 |
 | `formatPersonalSummary(messages, { slotLabel, timeZone, skippedLowPriority })` | 452-479 | 格式化个人 Gmail 摘要，最多展示 8 封重要邮件并报告略过低优先级数量。 | 纯逻辑 |
-| `formatSchoolSummary(messages, { slotLabel, timeZone })` | 481-500 | 格式化 RMIT 学校摘要，最多展示 8 封学校邮件。 | 纯逻辑 |
+| `formatSchoolSummary(messages, { slotLabel, timeZone })` | 481-500 | 格式化学校摘要，最多展示 8 封学校邮件。 | 纯逻辑 |
 | `monthNumber(value)` | 502-504 | 把月份字符串映射为数字。 | 纯逻辑 |
 | `to24Hour(hour, meridiem)` | 506-513 | 把 12 小时制小时和 am/pm 转成 24 小时制。 | 纯逻辑 |
 | `localTimeToUtc({ year, month, day, hour, minute }, timeZone)` | 515-526 | 把指定时区的本地时间转换成 UTC `Date`。 | 纯逻辑 |
@@ -113,7 +113,7 @@ runSchoolCheckCli().catch(reportFatalSchoolCheckError);
 
 | 函数 | 代表性输入 | 期望输出/断言 |
 |---|---|---|
-| `zonedParts` | `new Date("2026-06-24T00:30:05Z")`, `Australia/Melbourne` | `{ year: 2026, month: 6, day: 24, hour: 10, minute: 30, second: 5 }` |
+| `zonedParts` | `new Date("2026-06-24T00:30:05Z")`, `Etc/GMT-10` | `{ year: 2026, month: 6, day: 24, hour: 10, minute: 30, second: 5 }` |
 | `dateKeyInZone` | 同上 | `"2026-06-24"` |
 | `minutesInZone` | 同上 | `630` |
 | `parseClock` | `"9:05"` | `{ hour: 9, minute: 5, total: 545, label: "09:05" }` |
@@ -134,14 +134,14 @@ runSchoolCheckCli().catch(reportFatalSchoolCheckError);
 | `classifyPersonalMessage` | subject `"Uber receipt"`, from `"Uber"` | `{ kind: "低优先级", important: false }` |
 | `translatePersonalSubject` | `"Security alert"` | `"Google 安全提醒"` |
 | `translatePersonalSubject` | `"Fw: hello"` | `"转发：hello"` |
-| `formatPersonalSummary` | 一封 Security alert，slotLabel `10:30`，skippedLowPriority `2` | 输出含标题、`[账号安全] Google 安全提醒`、`已略过 2 封...`、`时区：Australia/Melbourne` |
-| `formatSchoolSummary` | 空 messages，slotLabel `手动` | 当前行为是不追加时区：`RMIT 学校检查（墨尔本时间 手动）\n\n- 暂无新的学校事项。` |
+| `formatPersonalSummary` | 一封 Security alert，slotLabel `10:30`，skippedLowPriority `2` | 输出含标题、`[账号安全] Google 安全提醒`、`已略过 2 封...`、`时区：Etc/GMT-10` |
+| `formatSchoolSummary` | 空 messages，slotLabel `手动` | 输出：`学校检查（<configured-timezone> 手动）\n\n- 暂无新的学校事项。` |
 | `formatSchoolSummary` | 9 封学校消息 | 只展示前 8 封，且每行分类由 `classifySchoolMessage` 决定 |
 | `monthNumber` | `"Sept"` / `"bad"` | `9` / `undefined` |
 | `to24Hour` | `(12, "am")`, `(12, "pm")`, `(7, "pm")` | `0`, `12`, `19` |
-| `localTimeToUtc` | `{ 2026-06-24 10:30 }`, `Australia/Melbourne` | `2026-06-24T00:30:00.000Z` |
+| `localTimeToUtc` | `{ 2026-06-24 10:30 }`, `Etc/GMT-10` | `2026-06-24T00:30:00.000Z` |
 | `extractYearFallback` | message date 含 `2025` | `2025` |
-| `extractYearFallback` | message date 无年份，now 为 2026 年墨尔本时间 | `2026` |
+| `extractYearFallback` | message date 无年份，now 为配置时区的 2026 年 | `2026` |
 | `extractDeadlinesFromMessage` | body `"Assignment due June 24, 2026 at 11:30 pm"` | 一条 deadline，`dueLocal` 为 `2026-06-24 23:30`，`dueAt` 为 `2026-06-24T13:30:00.000Z` |
 | `extractDeadlinesFromMessage` | body `"24 June 2026 at 23:30 deadline"` | 反向日期格式也能抽出同一天 23:30 |
 | `collectDeadlines` | 两封消息含重复 key deadline | 按 key 去重，并按 `dueAt` 升序 |
@@ -185,6 +185,6 @@ runSchoolCheckCli().catch(reportFatalSchoolCheckError);
 - **空摘要格式存在早返回差异**：`formatSchoolSummary([])` 和 `formatGameSummary([])` 当前不会追加 `时区：...`，而个人摘要会追加时区；这可能看起来不一致，但第一轮拆分必须锁住。
 - **正则顺序就是业务优先级**：例如学校邮件先判 CES/问卷，再判成绩、作业、考试等；个人邮件低优先级在多类重要规则之后。调整顺序会改变分类。
 - **`formatGameSummary` 隐式读 env**：这是格式化函数里的隐藏外部依赖，拆分时应参数化，但要先用测试确认最大展示条数行为。
-- **时间与时区测试要固定 Date**：deadline 和 slot 逻辑依赖 `Intl.DateTimeFormat`、时区和 DST；测试应使用明确 UTC 字符串和 `Australia/Melbourne`，避免本机时区影响。
+- **时间与时区测试要固定 Date**：deadline 和 slot 逻辑依赖 `Intl.DateTimeFormat` 与时区；测试应使用明确 UTC 字符串和固定偏移测试时区，避免本机时区影响。
 - **不要提前合并 `openai.mjs` 的相似分类逻辑**：仓库里存在相似但不完全相同的分类规则。S2 只拆 `school-check.mjs`，不要顺手抽共享分类模块，否则风险和变更面会扩大。
 - **路径和 env 名称不能改**：`SCHOOL_MAIL_DROP_DIR`、`PERSONAL_MAIL_DROP_DIR`、`GMAIL_EXPORT_QUERY`、`GOG_ACCOUNT`、`SCHOOL_CHECK_*`、`GAME_*` 等现有配置名和默认值都属于外部契约。

@@ -9,7 +9,7 @@ export const NODES = {
   },
   mac: {
     id: "mac",
-    label: "MacBook",
+    label: "Mac",
     local: false,
     capabilities: ["files", "browser", "screen", "gui-control", "codex"]
   }

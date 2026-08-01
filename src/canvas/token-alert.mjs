@@ -3,8 +3,14 @@ import path from "node:path";
 import { tokenExpiryStatus } from "./token-guard.mjs";
 
 const TOKEN_ALERT_STATE_FILE = "data/state/canvas-token-alert.json";
-const SETTINGS_URL = "https://rmit.instructure.com/profile/settings";
-const RENEWAL_STEPS = `续期：打开 ${SETTINGS_URL} → Approved Integrations → + New Access Token → 把新 token 发给我，我来更新。`;
+const CANVAS_BASE_URL_PLACEHOLDER = "https://<your-school>.instructure.com";
+
+function renewalSteps(canvasBaseUrl) {
+  const configuredBaseUrl = String(canvasBaseUrl || "").trim().replace(/\/+$/, "");
+  const baseUrl = configuredBaseUrl || CANVAS_BASE_URL_PLACEHOLDER;
+  const configHint = configuredBaseUrl ? "" : " 请先在 .env 配置 CANVAS_BASE_URL。";
+  return `续期：打开 ${baseUrl}/profile/settings → Approved Integrations → + New Access Token → 把新 token 发给我，我来更新。${configHint}`;
+}
 
 function dayKey(nowMs) {
   const date = new Date(nowMs);
@@ -43,22 +49,24 @@ export async function sendTokenExpiryAlertIfNeeded({
   expiresAtIso,
   nowMs = Date.now(),
   send,
-  stateFile = path.resolve(process.cwd(), TOKEN_ALERT_STATE_FILE)
+  stateFile = path.resolve(process.cwd(), TOKEN_ALERT_STATE_FILE),
+  canvasBaseUrl = process.env.CANVAS_BASE_URL
 }) {
   const status = tokenExpiryStatus(expiresAtIso, nowMs);
   if (status.level === "ok" || !expiresAtIso) return false;
 
   const message = status.level === "expired"
-    ? `Canvas token 已到期（${expiresAtIso}）。${RENEWAL_STEPS}`
-    : `Canvas token 还有 ${status.daysLeft} 天到期（${expiresAtIso}）。${RENEWAL_STEPS}`;
+    ? `Canvas token 已到期（${expiresAtIso}）。${renewalSteps(canvasBaseUrl)}`
+    : `Canvas token 还有 ${status.daysLeft} 天到期（${expiresAtIso}）。${renewalSteps(canvasBaseUrl)}`;
   return sendOncePerDay(status.level, message, { nowMs, send, stateFile });
 }
 
 export async function sendCanvasUnauthorizedAlert({
   nowMs = Date.now(),
   send,
-  stateFile = path.resolve(process.cwd(), TOKEN_ALERT_STATE_FILE)
+  stateFile = path.resolve(process.cwd(), TOKEN_ALERT_STATE_FILE),
+  canvasBaseUrl = process.env.CANVAS_BASE_URL
 }) {
-  const message = `Canvas token 已失效，请重新生成。${RENEWAL_STEPS}`;
+  const message = `Canvas token 已失效，请重新生成。${renewalSteps(canvasBaseUrl)}`;
   return sendOncePerDay("unauthorized", message, { nowMs, send, stateFile });
 }

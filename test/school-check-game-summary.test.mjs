@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { formatGameSummary } from "../src/school/workflow.mjs";
 
-const timeZone = "Australia/Melbourne";
+const timeZone = "Etc/GMT-10";
 const gameItems = [
   {
     game: "War Thunder",
@@ -36,7 +36,7 @@ test("formatGameSummary keeps empty output without timezone footer", () => {
   assert.equal(
     text,
     [
-      "游戏资讯检查（墨尔本时间 manual）",
+      "游戏资讯检查（Etc/GMT-10 manual）",
       "",
       "- 暂无新的游戏资讯。"
     ].join("\n")
@@ -48,12 +48,12 @@ test("formatGameSummary formats a single game item", () => {
   assert.equal(
     formatGameSummary([gameItems[0]], { slotLabel: "10:30", timeZone }),
     [
-      "游戏资讯检查（墨尔本时间 10:30）",
+      "游戏资讯检查（Etc/GMT-10 10:30）",
       "",
       "- [战雷官方] 开发日志：声音 Mod｜War Thunder News｜2026-06-24",
       "  https://example.com/sound-mods",
       "",
-      "时区：Australia/Melbourne"
+      "时区：Etc/GMT-10"
     ].join("\n")
   );
 });
@@ -62,14 +62,14 @@ test("formatGameSummary truncates output with maxItems", () => {
   assert.equal(
     formatGameSummary(gameItems, { slotLabel: "10:30", timeZone, maxItems: 2 }),
     [
-      "游戏资讯检查（墨尔本时间 10:30）",
+      "游戏资讯检查（Etc/GMT-10 10:30）",
       "",
       "- [战雷官方] 开发日志：声音 Mod｜War Thunder News｜2026-06-24",
       "  https://example.com/sound-mods",
       "- [塔科夫官方] 活动：Special Rewards｜Tarkov｜2026-06-23",
       "  https://example.com/tarkov-event",
       "",
-      "时区：Australia/Melbourne"
+      "时区：Etc/GMT-10"
     ].join("\n")
   );
 });

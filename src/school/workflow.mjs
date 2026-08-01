@@ -13,7 +13,7 @@ import { dueSlots } from "./schedule.mjs";
 import { compactLine, formatPersonalSummary, formatSchoolSummary } from "./summaries.mjs";
 import { loadState, saveState, statePath } from "./state.mjs";
 
-const DEFAULT_TIME_ZONE = "Australia/Melbourne";
+const DEFAULT_TIME_ZONE = "UTC";
 
 function hasArg(name) {
   return process.argv.includes(name);
@@ -36,7 +36,7 @@ export function shouldAlertGmailFailure(streak, lastAlertIso, nowMs, minStreak =
 
 export function formatGameSummary(items, { slotLabel, timeZone, maxItems = 8 }) {
   const lines = [
-    `游戏资讯检查（墨尔本时间 ${slotLabel || "手动"}）`,
+    `游戏资讯检查（${timeZone} ${slotLabel || "手动"}）`,
     ""
   ];
 
@@ -153,7 +153,9 @@ export async function runSchoolCheckCli() {
     }
 
     if (personalExportError && shouldAlertGmailFailure(state.gmailFailStreak, state.lastGmailAuthAlertAt, now.getTime())) {
-      await sendOrPrint(`⚠️ Gmail 邮件读取连续失败（可能授权过期）。\n请在电脑上用 PowerShell 运行（必须带项目环境）：\ncd D:\\AI\\personal-ai-assistant; . .\\scripts\\openclaw-env.ps1; & \"D:\\AI\\gogcli\\gog.exe\" auth add <your-gmail>@gmail.com\n\n错误：${personalExportError.slice(0, 200)}`, dryRun);
+      const authAccount = gmailAccount || "<your-gmail>@gmail.com";
+      const configHint = gmailAccount ? "" : "\nGOG_ACCOUNT 未配置，请先在 .env 填写。";
+      await sendOrPrint(`⚠️ Gmail 邮件读取连续失败（可能授权过期）。\n请在电脑上用 PowerShell 运行（必须带项目环境）：\ncd \"${process.cwd()}\"; . .\\scripts\\openclaw-env.ps1; gog auth add ${authAccount}${configHint}\n\n错误：${personalExportError.slice(0, 200)}`, dryRun);
       telegramMessagesSent += 1;
       state.lastGmailAuthAlertAt = now.toISOString();
     }
@@ -264,7 +266,7 @@ export async function runSchoolCheckCli() {
 
   for (const deadline of dueSoon.slice(0, 5)) {
     const text = [
-      "RMIT 临期提醒",
+      "学校临期提醒",
       "",
       `- ${compactLine(deadline.title)}`,
       `- 截止：${deadline.dueLocal}（${timeZone}）`,
@@ -278,7 +280,7 @@ export async function runSchoolCheckCli() {
   if (sendEmptyCheckSummary && slots.length > 0 && telegramMessagesSent === 0) {
     const slotLabel = slots.map((slot) => slot.label).join(", ");
     const lines = [
-      `定时检查完成（墨尔本时间 ${slotLabel}）`,
+      `定时检查完成（${timeZone} ${slotLabel}）`,
       "",
       "- 学校邮件：暂无新的未推送事项。",
       "- 个人 Gmail：暂无新的重要邮件。",
@@ -343,7 +345,7 @@ export async function reportFatalSchoolCheckError(error) {
     console.error(error.stack || error.message);
     try {
       loadEnv();
-      await sendTelegramMessage(`RMIT 学校检查失败：${error.message}`);
+      await sendTelegramMessage(`学校检查失败：${error.message}`);
     } catch {
       // Keep the original failure visible in stderr.
     }

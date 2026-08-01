@@ -11,7 +11,7 @@ import {
 
 test("needsCanvas recognizes Canvas, course codes, and assignment language", () => {
   assert.equal(needsCanvas("帮我看下 canvas 上的作业"), true);
-  assert.equal(needsCanvas("AERO2356 最近有什么"), true);
+  assert.equal(needsCanvas("ENGR1001 最近有什么"), true);
   assert.equal(needsCanvas("system engineering 的 group assessment 要干嘛"), true);
   assert.equal(needsCanvas("assignment due 是哪天"), true);
   assert.equal(needsCanvas("下次 quiz 和考试什么时候"), true);
@@ -24,7 +24,7 @@ test("needsCanvas rejects unrelated screen and local questions", () => {
 });
 
 test("Canvas routing sits after T3/T2 and before browser/screen", () => {
-  const text = "帮我看下 Canvas 网页上的 AERO2356 作业";
+  const text = "帮我看下 Canvas 网页上的 ENGR1001 作业";
   const route = (tier) => pickCapability({
     tier,
     needsCanvas: needsCanvas(text),

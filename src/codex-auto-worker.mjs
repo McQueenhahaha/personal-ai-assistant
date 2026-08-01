@@ -70,7 +70,7 @@ function nodeCapabilityFor(task, route) {
 
 function unavailableNodeMessage(capability, reason) {
   if (capability === "gui-control") {
-    return "这个任务需要图形界面操控，但 MacBook 卫星当前离线（可能合盖睡眠），这台电脑也暂时不可用。请唤醒 MacBook 或稍后再试。";
+    return "这个任务需要图形界面操控，但 Mac 卫星当前离线（可能休眠），这台电脑也暂时不可用。请唤醒 Mac 或稍后再试。";
   }
   const labels = {
     browser: "浏览器",
@@ -247,8 +247,9 @@ export async function runCanvasChat(task, root = projectRoot(), dependencies = {
 
 export function buildPrompt(task, root = projectRoot()) {
   if (task.taskType === "study-distill") {
+    const learnerProfile = String(process.env.STUDY_LEARNER_PROFILE || "大学工程专业本科生").trim();
     return [
-      "你是一位擅长把大学工程课程讲透的老师。用户是 RMIT 航空工程本科生，下面是他没听懂的课程主题。",
+      `你是一位擅长把大学工程课程讲透的老师。用户是${learnerProfile}，下面是其没听懂的课程主题。`,
       "请生成一份 Markdown 学习文档，要求：",
       "- 简体中文讲解，专业术语保留英文原文（首次出现时标注）",
       "- 结构：# 主题 / ## 核心概念（直觉优先，先讲为什么再讲是什么） / ## 关键公式与推导（逐步，标注每步物理意义） / ## 典型例题（2-3 道，完整解题过程） / ## 常见误区 / ## 自测题（5 道，答案附文末）",

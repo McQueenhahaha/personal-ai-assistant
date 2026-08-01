@@ -43,7 +43,7 @@ const noiseMessage = {
 
 const schoolSurveyMessage = {
   subject: "CES survey",
-  from: "RMIT",
+  from: "School",
   date: "2026-06-22",
   body: ""
 };
@@ -170,7 +170,7 @@ test("todo builder keeps current mixed and empty outputs", () => {
     [
       "- \u5148\u6838\u5bf9\u8d26\u53f7/\u767b\u5f55\u5b89\u5168\uff1aSecurity alert",
       "- \u5904\u7406\u4e2a\u4eba\u90ae\u4ef6\uff1aPlease review and confirm repayment",
-      "- \u5982\u6709\u7a7a\uff0c\u5b8c\u6210 RMIT \u95ee\u5377/\u53cd\u9988\uff1aCES survey"
+      "- \u5982\u6709\u7a7a\uff0c\u5b8c\u6210\u5b66\u6821\u95ee\u5377/\u53cd\u9988\uff1aCES survey"
     ]
   );
   assert.deepEqual(buildTodoItems({ schoolMessages: [], personalMessages: [] }), [
@@ -195,8 +195,8 @@ test("deterministic digest keeps full empty and mixed output strings", () => {
     [
       "Daily Digest",
       "",
-      "RMIT / \u5b66\u6821",
-      "- \u6682\u65e0\u5b66\u6821\u90ae\u4ef6\u6587\u4ef6\u3002\u628a RMIT \u90ae\u4ef6\u5bfc\u51fa\u5230 `data/school-mail-drop` \u540e\uff0c\u6211\u4f1a\u5728\u8fd9\u91cc\u6574\u7406\u8bfe\u7a0b\u3001\u622a\u6b62\u65e5\u671f\u548c\u91cd\u8981\u901a\u77e5\u3002",
+      "\u5b66\u6821",
+      "- \u6682\u65e0\u5b66\u6821\u90ae\u4ef6\u6587\u4ef6\u3002\u628a\u5b66\u6821\u90ae\u4ef6\u5bfc\u51fa\u5230 `data/school-mail-drop` \u540e\uff0c\u6211\u4f1a\u5728\u8fd9\u91cc\u6574\u7406\u8bfe\u7a0b\u3001\u622a\u6b62\u65e5\u671f\u548c\u91cd\u8981\u901a\u77e5\u3002",
       "",
       "\u4e2a\u4eba\u90ae\u4ef6",
       "- \u6682\u65e0\u4e2a\u4eba\u90ae\u4ef6\u6587\u4ef6\u3002",
@@ -219,8 +219,8 @@ test("deterministic digest keeps full empty and mixed output strings", () => {
     [
       "Daily Digest",
       "",
-      "RMIT / \u5b66\u6821",
-      "- [\u95ee\u5377/\u53cd\u9988] CES survey\uff5cRMIT\uff5c2026-06-22",
+      "\u5b66\u6821",
+      "- [\u95ee\u5377/\u53cd\u9988] CES survey\uff5cSchool\uff5c2026-06-22",
       "- [\u6210\u7ee9/\u53cd\u9988] \u4f5c\u4e1a/\u6d4b\u9a8c\u5df2\u8bc4\u5206\uff1a\u6d4b\u9a8c\uff5cCanvas\uff5c2026-06-24",
       "",
       "\u4e2a\u4eba\u90ae\u4ef6",
@@ -235,7 +235,7 @@ test("deterministic digest keeps full empty and mixed output strings", () => {
       "\u5f85\u529e",
       "- \u5148\u6838\u5bf9\u8d26\u53f7/\u767b\u5f55\u5b89\u5168\uff1aSecurity alert",
       "- \u5904\u7406\u4e2a\u4eba\u90ae\u4ef6\uff1aPlease review and confirm repayment",
-      "- \u5982\u6709\u7a7a\uff0c\u5b8c\u6210 RMIT \u95ee\u5377/\u53cd\u9988\uff1aCES survey"
+      "- \u5982\u6709\u7a7a\uff0c\u5b8c\u6210\u5b66\u6821\u95ee\u5377/\u53cd\u9988\uff1aCES survey"
     ].join("\n")
   );
 });
@@ -244,7 +244,7 @@ test("digest validation keeps current section counting and rejection rules", () 
   const digestText = [
     "Daily Digest",
     "",
-    "RMIT / \u5b66\u6821",
+    "\u5b66\u6821",
     "- one",
     "- two",
     "",
@@ -260,7 +260,7 @@ test("digest validation keeps current section counting and rejection rules", () 
   const tooManySchoolBullets = [
     "Daily Digest",
     "",
-    "RMIT / \u5b66\u6821",
+    "\u5b66\u6821",
     "- one",
     "- two",
     "- three",
@@ -277,9 +277,9 @@ test("digest validation keeps current section counting and rejection rules", () 
     "- one"
   ].join("\n");
 
-  assert.equal(sectionBulletCount(digestText, "RMIT / \u5b66\u6821"), 2);
+  assert.equal(sectionBulletCount(digestText, "\u5b66\u6821"), 2);
   assert.equal(digestLooksReasonable(digestText), true);
-  assert.equal(digestLooksReasonable("RMIT / \u5b66\u6821\n- one"), false);
+  assert.equal(digestLooksReasonable("\u5b66\u6821\n- one"), false);
   assert.equal(digestLooksReasonable(`${digestText}\ngmail-snapshot-2026`), false);
   assert.equal(digestLooksReasonable(tooManySchoolBullets), false);
 });

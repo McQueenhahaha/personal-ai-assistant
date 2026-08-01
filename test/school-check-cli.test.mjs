@@ -16,7 +16,7 @@ function makeCliRoot(t) {
     path.join(schoolDrop, "campus-update.eml"),
     [
       "Subject: Campus update for CLI smoke",
-      "From: RMIT Test <test@example.edu>",
+      "From: School Test <test@example.edu>",
       "Date: Wed, 24 Jun 2026 10:00:00 +1000",
       "",
       "This is a smoke fixture."
@@ -34,7 +34,7 @@ function runSchoolCheck({ root, schoolDrop, personalDrop, args }) {
     PERSONAL_MAIL_DROP_DIR: personalDrop,
     SCHOOL_CHECK_TIMES: "99:99",
     SCHOOL_CHECK_GRACE_MINUTES: "0",
-    SCHOOL_TIMEZONE: "Australia/Melbourne",
+    SCHOOL_TIMEZONE: "Etc/GMT-10",
     MAIL_DROP_MAX_FILES: "5"
   };
   delete env.TELEGRAM_BOT_TOKEN;
@@ -80,7 +80,7 @@ test("school-check CLI dry-run check-only writes a temp run summary without Tele
 
   assert.equal(result.code, 0);
   assert.equal(result.stderr, "");
-  assert.match(result.stdout, /"timezone": "Australia\/Melbourne"/);
+  assert.match(result.stdout, /"timezone": "Etc\/GMT-10"/);
   assert.match(result.stdout, /"telegramMessagesSent": 0/);
 
   const summary = readOnlyRunSummary(context.root);

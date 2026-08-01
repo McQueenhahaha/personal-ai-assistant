@@ -13,7 +13,7 @@ export function parseField(block, name) {
 
 export function formatPersonalSummary(messages, { slotLabel, timeZone, skippedLowPriority }) {
   const lines = [
-    `个人 Gmail 检查（墨尔本时间 ${slotLabel || "手动"}）`,
+    `个人 Gmail 检查（${timeZone} ${slotLabel || "手动"}）`,
     ""
   ];
 
@@ -42,7 +42,7 @@ export function formatPersonalSummary(messages, { slotLabel, timeZone, skippedLo
 
 export function formatSchoolSummary(messages, { slotLabel, timeZone }) {
   const lines = [
-    `RMIT 学校检查（墨尔本时间 ${slotLabel || "手动"}）`,
+    `学校检查（${timeZone} ${slotLabel || "手动"}）`,
     ""
   ];
 

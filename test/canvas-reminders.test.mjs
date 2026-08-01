@@ -57,7 +57,7 @@ test("selectDueReminders deduplicates sent thresholds and returns new state", ()
 
 test("formatApiUpcomingList includes course, remaining time, submission, and points", () => {
   const output = formatApiUpcomingList([{
-    courseCode: "AERO2356",
+    courseCode: "ENGR1001",
     courseName: "Systems Engineering",
     id: 9,
     name: "Group assessment",
@@ -67,7 +67,7 @@ test("formatApiUpcomingList includes course, remaining time, submission, and poi
     pointsPossible: 30
   }], nowMs);
 
-  assert.equal(output.includes("[AERO2356] Group assessment"), true);
+  assert.equal(output.includes("[ENGR1001] Group assessment"), true);
   assert.equal(output.includes("还有2天2小时"), true);
   assert.equal(output.includes("未提交"), true);
   assert.equal(output.includes("30 分"), true);

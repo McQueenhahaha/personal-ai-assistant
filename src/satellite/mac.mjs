@@ -4,7 +4,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 
-const DEFAULT_HOST = "user@100.x.y.z";
+const HOST_PLACEHOLDER = "user@100.x.y.z";
 const DEFAULT_TIMEOUT_MS = 600000;
 const POLL_MS = 5000;
 const SSH_GRACE_MS = 60000;
@@ -26,10 +26,10 @@ function expandHome(value, home) {
 function resolveConfig(dependencies = {}) {
   const env = dependencies.env || process.env;
   const home = dependencies.homedir?.() || os.homedir();
-  const host = String(env.MAC_SATELLITE_HOST || DEFAULT_HOST).trim();
+  const host = String(env.MAC_SATELLITE_HOST || HOST_PLACEHOLDER).trim();
   const key = path.resolve(expandHome(env.MAC_SATELLITE_KEY || path.join(home, ".ssh", "pai_mac"), home));
-  if (!host || host.startsWith("-") || /\s/.test(host)) {
-    throw new Error("MAC_SATELLITE_HOST 未配置或格式不合法");
+  if (!host || host === HOST_PLACEHOLDER || host.startsWith("-") || /\s/.test(host)) {
+    throw new Error(`MAC_SATELLITE_HOST 未配置或格式不合法（当前：${host || HOST_PLACEHOLDER}）。请在 .env 配置实际的 SSH 目标。`);
   }
   return { host, key };
 }

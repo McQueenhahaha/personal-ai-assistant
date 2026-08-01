@@ -1,10 +1,30 @@
 ﻿[CmdletBinding()]
 param(
-  [string]$MacHost = "user@100.x.y.z",
-  [string]$KeyPath = "~/.ssh/pai_mac"
+  [string]$MacHost,
+  [string]$KeyPath
 )
 
 $ErrorActionPreference = "Stop"
+. "$PSScriptRoot\openclaw-env.ps1"
+
+$MacHostPlaceholder = "user@100.x.y.z"
+if ([string]::IsNullOrWhiteSpace($MacHost)) {
+  $MacHost = if ([string]::IsNullOrWhiteSpace($env:MAC_SATELLITE_HOST)) {
+    $MacHostPlaceholder
+  } else {
+    $env:MAC_SATELLITE_HOST
+  }
+}
+if ($MacHost -eq $MacHostPlaceholder) {
+  throw "MAC_SATELLITE_HOST 未配置（当前：$MacHostPlaceholder）。请在 .env 填写实际的 SSH 目标。"
+}
+if ([string]::IsNullOrWhiteSpace($KeyPath)) {
+  $KeyPath = if ([string]::IsNullOrWhiteSpace($env:MAC_SATELLITE_KEY)) {
+    "~/.ssh/pai_mac"
+  } else {
+    $env:MAC_SATELLITE_KEY
+  }
+}
 
 # Mac 侧结果含中文；PS 5.1 默认按 ANSI 解码原生命令输出会乱码，导致 ConvertFrom-Json 失败。
 $PreviousConsoleEncoding = [Console]::OutputEncoding

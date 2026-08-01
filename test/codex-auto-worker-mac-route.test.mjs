@@ -170,7 +170,7 @@ test("worker explains GUI unavailability when every candidate is offline", async
 
   const resultText = fs.readFileSync(results[0].outFile, "utf8");
   assert.equal(results[0].ok, true);
-  assert.match(resultText, /MacBook 卫星当前离线（可能合盖睡眠）/);
+  assert.match(resultText, /Mac 卫星当前离线（可能休眠）/);
   assert.match(resultText, /这台电脑也暂时不可用/);
   assert.equal(resultText.includes(tempDir), false);
 });

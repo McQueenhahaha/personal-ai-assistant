@@ -12,7 +12,7 @@ test("runCanvasDue formats the richer API assignment fields", async () => {
   const output = await runCanvasDue({
     now: nowMs,
     listUpcoming: async () => [{
-      courseCode: "AERO2356",
+      courseCode: "ENGR1001",
       courseName: "Flight Mechanics",
       id: 10,
       name: "Homework",
@@ -23,7 +23,7 @@ test("runCanvasDue formats the richer API assignment fields", async () => {
     }]
   });
 
-  assert.equal(output.includes("[AERO2356] Homework"), true);
+  assert.equal(output.includes("[ENGR1001] Homework"), true);
   assert.equal(output.includes("未提交"), true);
   assert.equal(output.includes("20 分"), true);
   assert.equal(output.includes("降级模式"), false);
@@ -39,7 +39,7 @@ test("runCanvasDue falls back to ICS and labels degraded mode", async () => {
       assignments: [{
         uid: "event-assignment-10",
         title: "Fallback homework",
-        courseCode: "AERO2356",
+        courseCode: "ENGR1001",
         dueMs: nowMs + 86400000,
         url: "https://canvas.test/assignments/10"
       }],
@@ -47,7 +47,7 @@ test("runCanvasDue falls back to ICS and labels degraded mode", async () => {
     })
   });
 
-  assert.equal(output.includes("Fallback homework [AERO2356]"), true);
+  assert.equal(output.includes("Fallback homework [ENGR1001]"), true);
   assert.equal(output.includes("降级模式"), true);
   assert.equal(output.includes("数据来自 ICS"), true);
 });

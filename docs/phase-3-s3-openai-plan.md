@@ -52,10 +52,10 @@ src/index.mjs
 | `fieldValue(block, name)` | 23-26 | 从 Outlook markdown 字段块中解析 `- Name: value`。 | 纯逻辑 |
 | `readMessageSource(message)` | 28-33 | 优先从 `message.file` 读文件，失败或无文件时回退 `message.body`。 | I/O或网络副作用 |
 | `parseGmailSnapshot(message)` | 35-65 | 解析 Gmail snapshot 表格，过滤 draft/trash/spam，产出 personal message。 | I/O或网络副作用 |
-| `parseOutlookSnapshot(message)` | 67-96 | 解析 Outlook/RMIT snapshot markdown，产出 school message。 | I/O或网络副作用 |
+| `parseOutlookSnapshot(message)` | 67-96 | 解析学校 Outlook snapshot markdown，产出 school message。 | I/O或网络副作用 |
 | `messageDateMs(message)` | 98-101 | 把 `date` 或 `modifiedAt` 转为可排序毫秒时间，非法日期返回 0。 | 纯逻辑 |
 | `normalizeMailMessages(mailMessages)` | 103-132 | 展开 snapshot、补 key、过滤坏消息、去重并按时间倒序排序。 | I/O或网络副作用 |
-| `translateSchoolTitle(title)` | 134-157 | 对常见 RMIT/Canvas 邮件标题做中文化和关键词替换。 | 纯逻辑 |
+| `translateSchoolTitle(title)` | 134-157 | 对常见学校/Canvas 邮件标题做中文化和关键词替换。 | 纯逻辑 |
 | `compactLine(value)` | 159-161 | 折叠空白并 trim，生成单行文本。 | 纯逻辑 |
 | `classifySchoolMessage(message)` | 163-173 | 按 subject/body 正则把学校邮件分成问卷、成绩、作业、考试、Canvas、课程活动或通知。 | 纯逻辑 |
 | `classifyPersonalMessage(message)` | 175-225 | 按 subject/from/labels 正则给个人邮件打 kind、important、rank、action。 | 纯逻辑 |
@@ -150,9 +150,9 @@ export async function buildDigest({ title, gameNews, mailMessages }, deps = {}) 
 | `gamePrefix` | `{ sourceType: "official-site", game: "War Thunder" }` | `"战雷官方"` |
 | `gamePrefix` | `{ sourceType: "tarkov-official", game: "Escape from Tarkov" }` | `"塔科夫官方"` |
 | `formatGameItem` | game item 含 source 和 link | bullet 第一行含 `[来源] 标题｜source`，第二行缩进两个空格加 link |
-| `buildDeterministicDigest` | 空 `gameNews/schoolMessages/personalMessages` | 包含固定 4 个栏目；学校为空时提示导出 RMIT 邮件；待办为暂无明确待办 |
+| `buildDeterministicDigest` | 空 `gameNews/schoolMessages/personalMessages` | 包含固定 4 个栏目；学校为空时提示导出学校邮件；待办为暂无明确待办 |
 | `buildDeterministicDigest` | 每类输入超过 4 条 | 每个栏目最多展示 4 条 |
-| `sectionBulletCount` | `RMIT / 学校` 下两条 bullet，下一栏目一条 | 对 `RMIT / 学校` 返回 `2` |
+| `sectionBulletCount` | `学校` 下两条 bullet，下一栏目一条 | 对 `学校` 返回 `2` |
 | `digestLooksReasonable` | 缺少任一必需栏目 | `false` |
 | `digestLooksReasonable` | 文本含 `gmail-snapshot-2026` 或某栏目超过 4 条 | `false` |
 
@@ -189,7 +189,7 @@ export async function buildDigest({ title, gameNews, mailMessages }, deps = {}) 
 - **默认不启用 AI 的行为必须保持**：`ENABLE_AI_DIGEST` 不为 `"true"` 时直接返回确定性摘要，不应触发 Ollama/OpenAI。
 - **Ollama fallback 语义必须保持**：Ollama 输出不 reasonable 时直接确定性回退；Ollama 抛错且没有 OpenAI fallback/key 时，返回确定性摘要并追加 `本地 AI 提示：Ollama 暂时不可用（...）。`
 - **OpenAI fallback 参数不能顺手改**：endpoint 是 `/v1/responses`，默认模型是 `"gpt-5-mini"`，body 只有 `{ model, input: prompt }`，非 ok 响应当前会 throw。
-- **`digestLooksReasonable()` 是 LLM 输出闸门**：必须包含 4 个栏目，不能出现 `gmail-snapshot-*` / `outlook-rmit-snapshot-*` 文件名，每栏 bullet 数不能超过 4。
+- **`digestLooksReasonable()` 是 LLM 输出闸门**：必须包含 4 个栏目，不能出现 `gmail-snapshot-*` / `outlook-<school>-snapshot-*` 文件名，每栏 bullet 数不能超过 4。
 - **snapshot 解析细节不能漂移**：Gmail 解析 tab 分隔行、跳过 `DRAFT/TRASH/SPAM`、key 为 `gmail|id`；Outlook 解析 `## ` section、`From` 缺失为 `unknown sender`、`Received` 缺失回退 message date。
 - **归一化去重和排序要保持**：按 key 首次出现保留，过滤空 subject 和 `Could not read`，最终按 `messageDateMs` 倒序。
 - **分类正则顺序就是业务行为**：个人邮件中 `receipt` 规则早于促销/uber/noise 规则；学校邮件中问卷、成绩、作业、考试、Canvas、课程活动的顺序也会影响结果。

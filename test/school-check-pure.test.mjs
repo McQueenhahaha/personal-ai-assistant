@@ -25,7 +25,7 @@ import {
   zonedParts
 } from "../src/school-check.mjs";
 
-const timeZone = "Australia/Melbourne";
+const timeZone = "Etc/GMT-10";
 
 function serializeDeadlines(deadlines) {
   return deadlines.map((deadline) => ({
@@ -121,12 +121,12 @@ test("personal summary formatting keeps the full current string", () => {
       { slotLabel: "10:30", timeZone, skippedLowPriority: 2 }
     ),
     [
-      "个人 Gmail 检查（墨尔本时间 10:30）",
+      "个人 Gmail 检查（Etc/GMT-10 10:30）",
       "",
       "- [账号安全] Google 安全提醒｜Google｜2026-06-24",
       "- 已略过 2 封收据/促销等低优先级新邮件。",
       "",
-      "时区：Australia/Melbourne"
+      "时区：Etc/GMT-10"
     ].join("\n")
   );
 });
@@ -135,7 +135,7 @@ test("school summary formatting keeps empty and capped output strings", () => {
   assert.equal(
     formatSchoolSummary([], { slotLabel: "手动", timeZone }),
     [
-      "RMIT 学校检查（墨尔本时间 手动）",
+      "学校检查（Etc/GMT-10 手动）",
       "",
       "- 暂无新的学校事项。"
     ].join("\n")
@@ -145,13 +145,13 @@ test("school summary formatting keeps empty and capped output strings", () => {
     subject: index === 0 ? "CES survey" : `Assignment ${index} due`,
     body: index === 0 ? "" : "Submit soon",
     date: `2026-06-${String(10 + index).padStart(2, "0")}`,
-    from: "RMIT"
+    from: "School"
   }));
 
   assert.equal(
     formatSchoolSummary(messages, { slotLabel: "10:30", timeZone }),
     [
-      "RMIT 学校检查（墨尔本时间 10:30）",
+      "学校检查（Etc/GMT-10 10:30）",
       "",
       "- [问卷/反馈] CES survey｜2026-06-10",
       "- [作业/测验] Assignment 1 due｜2026-06-11",
@@ -162,7 +162,7 @@ test("school summary formatting keeps empty and capped output strings", () => {
       "- [作业/测验] Assignment 6 due｜2026-06-16",
       "- [作业/测验] Assignment 7 due｜2026-06-17",
       "",
-      "时区：Australia/Melbourne"
+      "时区：Etc/GMT-10"
     ].join("\n")
   );
 });
@@ -186,21 +186,21 @@ test("deadline extraction and collection keep full current objects", () => {
   const forwardMessage = {
     key: "school|a",
     subject: "Assignment due",
-    from: "RMIT Canvas",
+    from: "School Canvas",
     date: "Mon, 1 Jun 2026 10:00:00 +1000",
     body: "Assignment due June 24, 2026 at 11:30 pm"
   };
   const reverseMessage = {
     key: "school|b",
     subject: "Quiz deadline",
-    from: "RMIT Canvas",
+    from: "School Canvas",
     date: "Mon, 1 Jun 2026 10:00:00 +1000",
     body: "24 June 2026 at 23:30 deadline"
   };
   const duplicateDeadlineMessage = {
     key: "school|dup",
     subject: "Project deadline",
-    from: "RMIT Canvas",
+    from: "School Canvas",
     date: "Mon, 1 Jun 2026 10:00:00 +1000",
     body: "Project due June 25, 2026 at 10:15 am"
   };
@@ -209,7 +209,7 @@ test("deadline extraction and collection keep full current objects", () => {
     {
       key: "school|a|2026-06-24T13:30:00.000Z",
       title: "Assignment due",
-      from: "RMIT Canvas",
+      from: "School Canvas",
       dueAt: "2026-06-24T13:30:00.000Z",
       dueLocal: "2026-06-24 23:30",
       sourceDate: "Mon, 1 Jun 2026 10:00:00 +1000"
@@ -219,7 +219,7 @@ test("deadline extraction and collection keep full current objects", () => {
     {
       key: "school|b|2026-06-24T13:30:00.000Z",
       title: "Quiz deadline",
-      from: "RMIT Canvas",
+      from: "School Canvas",
       dueAt: "2026-06-24T13:30:00.000Z",
       dueLocal: "2026-06-24 23:30",
       sourceDate: "Mon, 1 Jun 2026 10:00:00 +1000"
@@ -235,7 +235,7 @@ test("deadline extraction and collection keep full current objects", () => {
       {
         key: "school|a|2026-06-24T13:30:00.000Z",
         title: "Assignment due",
-        from: "RMIT Canvas",
+        from: "School Canvas",
         dueAt: "2026-06-24T13:30:00.000Z",
         dueLocal: "2026-06-24 23:30",
         sourceDate: "Mon, 1 Jun 2026 10:00:00 +1000"
@@ -243,7 +243,7 @@ test("deadline extraction and collection keep full current objects", () => {
       {
         key: "school|dup|2026-06-25T00:15:00.000Z",
         title: "Duplicate deadline",
-        from: "RMIT Canvas",
+        from: "School Canvas",
         dueAt: "2026-06-25T00:15:00.000Z",
         dueLocal: "2026-06-25 10:15",
         sourceDate: "Mon, 1 Jun 2026 10:00:00 +1000"

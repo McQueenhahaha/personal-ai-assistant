@@ -92,7 +92,7 @@ export function normalizeMailMessages(mailMessages) {
       expanded.push(...(parsed.length > 0 ? parsed : [message]));
       continue;
     }
-    if (message.category === "school" && /^outlook-rmit-snapshot-/i.test(fileName)) {
+    if (message.category === "school" && /^outlook-[^-]+-snapshot-/i.test(fileName)) {
       const parsed = parseOutlookSnapshot(message);
       expanded.push(...(parsed.length > 0 ? parsed : [message]));
       continue;

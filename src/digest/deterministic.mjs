@@ -7,9 +7,9 @@ import { buildTodoItems } from "./todos.mjs";
 export function buildDeterministicDigest({ title, gameNews, schoolMessages, personalMessages }) {
   const lines = [title, ""];
 
-  lines.push("RMIT / 学校");
+  lines.push("学校");
   if (schoolMessages.length === 0) {
-    lines.push("- 暂无学校邮件文件。把 RMIT 邮件导出到 `data/school-mail-drop` 后，我会在这里整理课程、截止日期和重要通知。");
+    lines.push("- 暂无学校邮件文件。把学校邮件导出到 `data/school-mail-drop` 后，我会在这里整理课程、截止日期和重要通知。");
   } else {
     for (const message of schoolMessages.slice(0, DIGEST_SECTION_LIMIT)) {
       lines.push(formatSchoolItem(message));

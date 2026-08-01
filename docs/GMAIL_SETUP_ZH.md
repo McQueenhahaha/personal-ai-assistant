@@ -141,9 +141,9 @@ D:\AI\personal-ai-assistant\data\personal-mail-drop
 
 解决：Google Cloud Console -> OAuth consent screen / Audience -> `Publish app`。
 
-### RMIT 学校 Gmail/Workspace 授权失败
+### 学校 Gmail/Workspace 授权失败
 
-这套 Gmail 教程只用于你的个人 Gmail。学校 Outlook/RMIT 已经用本地 Outlook Desktop 导出，不走第三方 OAuth。
+这套 Gmail 教程只用于你的个人 Gmail。学校邮箱可改用本地 Outlook Desktop 导出，不走第三方 OAuth。
 
 ### 授权后脚本说找不到账号
 

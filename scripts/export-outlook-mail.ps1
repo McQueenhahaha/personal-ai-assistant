@@ -1,7 +1,7 @@
 ﻿param(
   [int]$Days = 7,
   [int]$MaxMessages = 40,
-  [string]$AccountContains = "rmit.edu.au",
+  [string]$AccountContains,
   [string]$OutDir,
   [int]$SyncWaitSeconds = 45,
   [switch]$NoSync,
@@ -11,6 +11,18 @@
 $ErrorActionPreference = "Stop"
 . "$PSScriptRoot\openclaw-env.ps1"
 $env:APPDATA = [Environment]::GetFolderPath("ApplicationData")
+
+$AccountPlaceholder = "<your-school-email-domain>"
+if ([string]::IsNullOrWhiteSpace($AccountContains)) {
+  $AccountContains = if ([string]::IsNullOrWhiteSpace($env:OUTLOOK_ACCOUNT_CONTAINS)) {
+    $AccountPlaceholder
+  } else {
+    $env:OUTLOOK_ACCOUNT_CONTAINS
+  }
+}
+if ($AccountContains -eq $AccountPlaceholder) {
+  throw "OUTLOOK_ACCOUNT_CONTAINS 未配置（当前：$AccountPlaceholder）。请在 .env 填写学校邮箱或 Outlook 存储名中的唯一片段。"
+}
 
 $Root = Split-Path -Parent $PSScriptRoot
 if ([string]::IsNullOrWhiteSpace($OutDir)) {
@@ -119,10 +131,10 @@ for ($i = 1; $i -le $namespace.Stores.Count; $i++) {
 }
 
 $stamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH-mm-ssZ")
-$outFile = Join-Path $OutDir "outlook-rmit-snapshot-$stamp.md"
+$outFile = Join-Path $OutDir "outlook-school-snapshot-$stamp.md"
 
 $lines = New-Object System.Collections.Generic.List[string]
-$lines.Add("# RMIT Outlook snapshot")
+$lines.Add("# School Outlook snapshot")
 $lines.Add("")
 $lines.Add("- Exported: $((Get-Date).ToString("o"))")
 $lines.Add("- Account filter: $AccountContains")

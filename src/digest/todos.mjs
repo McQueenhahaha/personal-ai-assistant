@@ -26,9 +26,9 @@ export function buildTodoItems({ schoolMessages, personalMessages }) {
   for (const message of schoolMessages) {
     const kind = classifySchoolMessage(message);
     if (kind === "作业/测验" || kind === "考试") {
-      add(`检查 RMIT 截止事项：${translateSchoolTitle(message.subject)}${message.date ? `｜${message.date}` : ""}`);
+      add(`检查学校截止事项：${translateSchoolTitle(message.subject)}${message.date ? `｜${message.date}` : ""}`);
     } else if (kind === "问卷/反馈") {
-      add(`如有空，完成 RMIT 问卷/反馈：${translateSchoolTitle(message.subject)}`);
+      add(`如有空，完成学校问卷/反馈：${translateSchoolTitle(message.subject)}`);
     }
   }
 

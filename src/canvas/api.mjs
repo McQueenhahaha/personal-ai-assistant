@@ -2,12 +2,12 @@ import { loadEnv } from "../env.mjs";
 
 const MAX_PAGES = 3;
 
-// Heuristic only: keep this list easy to extend when RMIT adds non-academic courses.
+// Heuristic only: keep this list easy to extend when a school adds non-academic courses.
 export const NOISE_PATTERNS = [
   /\binduction\b/i,
   /\bsafety\b/i,
   /\bawareness\b/i,
-  /\bhow\s*2\s*rmit\b/i,
+  /\bhow\s*2\b/i,
   /\bsex\s+and\s+consent\b/i,
   /\bbachelor\s+of\s+engineering\b/i
 ];

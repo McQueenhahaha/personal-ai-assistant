@@ -56,7 +56,7 @@ test("buildPrompt creates an engineering study document prompt", () => {
     source: "s"
   });
 
-  assert.equal(prompt.includes("航空工程"), true);
+  assert.equal(prompt.includes("工程专业本科生"), true);
   assert.equal(prompt.includes("自测题"), true);
   assert.equal(prompt.includes("断裂力学"), true);
 });
@@ -150,7 +150,7 @@ test("runCanvasChat fetches deterministic context before asking Claude without B
   let claudeCall;
   const task = {
     taskType: "telegram-chat",
-    prompt: "帮我看下 AERO2356 最近的作业要求",
+    prompt: "帮我看下 ENGR1001 最近的作业要求",
     title: "canvas",
     priority: "normal",
     source: "telegram"
@@ -159,12 +159,12 @@ test("runCanvasChat fetches deterministic context before asking Claude without B
   const execution = await runCanvasChat(task, path.resolve("canvas-test-root"), {
     async listActiveCourses() {
       calls.push("courses");
-      return [{ id: 7, code: "AERO2356", name: "Systems Engineering" }];
+      return [{ id: 7, code: "ENGR1001", name: "Systems Engineering" }];
     },
     async listUpcomingAssignments(options) {
       calls.push(["upcoming", options.courses[0].id]);
       return [{
-        courseCode: "AERO2356",
+        courseCode: "ENGR1001",
         courseName: "Systems Engineering",
         id: 9,
         name: "Group assessment",

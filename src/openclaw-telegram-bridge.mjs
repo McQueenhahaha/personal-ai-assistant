@@ -8,9 +8,11 @@ import { macSatelliteHealth } from "./satellite/mac.mjs";
 import { appendAudit } from "./security/audit.mjs";
 import { isExpired, loadApprovals, resolveApproval, saveApprovals } from "./security/pending.mjs";
 import { classifyTask, TIER } from "./security/policy.mjs";
+import { fetchUpdates, nextOffset, parseUpdates } from "./telegram/updates.mjs";
 
 const DEFAULT_MESSAGE_FILE = "./.openclaw/state/agents/main/sessions/sessions.json.telegram-messages.json";
 const DEFAULT_STATE_FILE = "./data/state/openclaw-telegram-bridge-state.json";
+const DEFAULT_UPDATE_OFFSET_FILE = "./data/state/telegram-update-offset.json";
 const MAINTENANCE_ACTIONS = [
   "dism-restorehealth",
   "dism-scanhealth",
@@ -127,15 +129,15 @@ async function summarizeStatus() {
   try {
     const health = await macSatelliteHealth();
     if (health.online && health.agentRunning) {
-      guiControlStatus = "图形操控：可用（MacBook 在线）";
+      guiControlStatus = "图形操控：可用（Mac 在线）";
     } else {
       const macDetail = health.online
-        ? "MacBook 在线，但卫星代理未运行"
-        : `MacBook 当前离线${health.error ? `：${health.error}` : ""}`;
+        ? "Mac 在线，但卫星代理未运行"
+        : `Mac 当前离线${health.error ? `：${health.error}` : ""}`;
       guiControlStatus = `图形操控：可用（这台电脑可代劳；${macDetail}）`;
     }
   } catch (error) {
-    guiControlStatus = `图形操控：可用（这台电脑可代劳；MacBook 状态探测失败：${error.message || String(error)}）`;
+    guiControlStatus = `图形操控：可用（这台电脑可代劳；Mac 状态探测失败：${error.message || String(error)}）`;
   }
   return [
     "AI 助手状态",
@@ -524,7 +526,7 @@ async function handleCommand({ token, chatId, text, dryRun }) {
 
   if (command === "/study") {
     if (!rest) {
-      await send(token, chatId, "用法：/study 课程/主题，例如：/study MIET2115 断裂力学 应力强度因子没听懂", dryRun);
+      await send(token, chatId, "用法：/study 课程/主题，例如：/study <course-code> 课程主题没听懂", dryRun);
       return true;
     }
     createTask({
@@ -567,8 +569,7 @@ async function handleCommand({ token, chatId, text, dryRun }) {
   return false;
 }
 
-async function processMessages({ messageFile, stateFile, token, chatId, dryRun, processExisting }) {
-  const messages = readTelegramMessages(messageFile);
+async function processMessageList({ messages, stateFile, token, chatId, dryRun, processExisting }) {
   let state = readJson(stateFile, null);
 
   if (!state) {
@@ -607,11 +608,91 @@ async function processMessages({ messageFile, stateFile, token, chatId, dryRun, 
   return handled;
 }
 
+async function processMessages({ messageFile, stateFile, token, chatId, dryRun, processExisting }) {
+  const messages = readTelegramMessages(messageFile);
+  return processMessageList({ messages, stateFile, token, chatId, dryRun, processExisting });
+}
+
+function rememberMessageKeys(messages, stateFile) {
+  const state = readJson(stateFile, null) || { seenKeys: [] };
+  const seen = new Set(state.seenKeys || []);
+  for (const message of messages) seen.add(message.key);
+  state.seenKeys = [...seen].slice(-2000);
+  writeJson(stateFile, state);
+}
+
+function readUpdateOffset(offsetFile) {
+  if (!fs.existsSync(offsetFile)) return null;
+  const state = readJson(offsetFile, null);
+  if (!Number.isInteger(state?.offset) || state.offset < 0) {
+    throw new Error(`Invalid Telegram update offset file: ${offsetFile}`);
+  }
+  return state.offset;
+}
+
+async function runDirectMode({
+  token,
+  chatId,
+  stateFile,
+  offsetFile,
+  dryRun,
+  processExisting,
+  once,
+  retrySeconds,
+  failureWarnThreshold
+}) {
+  const savedOffset = readUpdateOffset(offsetFile);
+  let skipHistorical = savedOffset == null && !processExisting;
+  let offset = savedOffset ?? (skipHistorical ? -1 : 0);
+  let consecutiveFailures = 0;
+
+  while (true) {
+    let updates;
+    try {
+      updates = await fetchUpdates({ token, offset });
+      consecutiveFailures = 0;
+    } catch (error) {
+      consecutiveFailures += 1;
+      console.warn(`Telegram 直连拉取失败（连续 ${consecutiveFailures} 次）：${error.message || String(error)}`);
+      if (consecutiveFailures === failureWarnThreshold) {
+        console.warn(`[Telegram 直连严重警告] getUpdates 已连续失败 ${failureWarnThreshold} 次，请检查网络和 Bot 状态。`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, retrySeconds * 1000));
+      continue;
+    }
+
+    const messages = parseUpdates(updates);
+    let handled = 0;
+    if (skipHistorical) {
+      rememberMessageKeys(messages, stateFile);
+      offset = nextOffset(updates, 0);
+      skipHistorical = false;
+    } else {
+      handled = await processMessageList({
+        messages,
+        stateFile,
+        token,
+        chatId,
+        dryRun,
+        processExisting: true
+      });
+      offset = nextOffset(updates, offset);
+    }
+    writeJson(offsetFile, { offset });
+
+    if (updates.length > 0) {
+      console.log(`Telegram 直连拉取到 ${updates.length} 条新消息（文本 ${messages.length} 条，处理 ${handled} 条）。`);
+    }
+    if (once) return;
+  }
+}
+
 async function main() {
   loadEnv();
   const once = hasArg("--once");
   const dryRun = hasArg("--dry-run");
   const processExisting = hasArg("--process-existing");
+  const directMode = boolEnv("TELEGRAM_DIRECT_MODE", false);
 
   if (!boolEnv("ENABLE_OPENCLAW_TELEGRAM_BRIDGE", true)) {
     console.log("OpenClaw Telegram bridge disabled. Set ENABLE_OPENCLAW_TELEGRAM_BRIDGE=true to enable.");
@@ -626,10 +707,31 @@ async function main() {
 
   const messageFile = resolveFromCwd(process.env.OPENCLAW_TELEGRAM_MESSAGES_FILE || DEFAULT_MESSAGE_FILE);
   const stateFile = resolveFromCwd(process.env.OPENCLAW_TELEGRAM_BRIDGE_STATE_FILE || DEFAULT_STATE_FILE);
+  const offsetFile = resolveFromCwd(DEFAULT_UPDATE_OFFSET_FILE);
   const pollSeconds = envNumber("OPENCLAW_TELEGRAM_BRIDGE_POLL_SECONDS", 3);
+  const failureWarnThreshold = Math.max(
+    1,
+    Math.trunc(envNumber("TELEGRAM_DIRECT_FAILURE_WARN_THRESHOLD", 5))
+  );
 
+  console.log(`当前模式：${directMode ? "Telegram 直连模式" : "OpenClaw 文件模式"}`);
   await registerOwnerCommandMenu(token, chatId, dryRun);
   console.log("OpenClaw Telegram bridge started.");
+  if (directMode) {
+    await runDirectMode({
+      token,
+      chatId,
+      stateFile,
+      offsetFile,
+      dryRun,
+      processExisting,
+      once,
+      retrySeconds: pollSeconds,
+      failureWarnThreshold
+    });
+    return;
+  }
+
   while (true) {
     const handled = await processMessages({ messageFile, stateFile, token, chatId, dryRun, processExisting });
     if (handled > 0) console.log(`Handled ${handled} OpenClaw Telegram command(s).`);

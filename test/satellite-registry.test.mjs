@@ -30,5 +30,5 @@ test("pickNode returns null when every candidate is offline", async () => {
 
   assert.equal(selection.nodeId, null);
   assert.match(selection.reason, /这台电脑不可用/);
-  assert.match(selection.reason, /MacBook不可用/);
+  assert.match(selection.reason, /Mac不可用/);
 });
