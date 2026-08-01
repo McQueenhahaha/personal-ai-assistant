@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 import { createTask, ensureQueue, listPendingTasks } from "./queue.mjs";
 import { envNumber, loadEnv, projectRoot, resolveFromCwd } from "./env.mjs";
 import { OWNER_COMMAND_MENU } from "./openclaw/command-menu.mjs";
@@ -13,6 +14,7 @@ import { fetchUpdates, nextOffset, parseUpdates } from "./telegram/updates.mjs";
 const DEFAULT_MESSAGE_FILE = "./.openclaw/state/agents/main/sessions/sessions.json.telegram-messages.json";
 const DEFAULT_STATE_FILE = "./data/state/openclaw-telegram-bridge-state.json";
 const DEFAULT_UPDATE_OFFSET_FILE = "./data/state/telegram-update-offset.json";
+const DEFAULT_DIRECT_HEARTBEAT_FILE = "./data/state/telegram-direct-heartbeat.json";
 const MAINTENANCE_ACTIONS = [
   "dism-restorehealth",
   "dism-scanhealth",
@@ -54,6 +56,10 @@ function readJson(file, fallback) {
 function writeJson(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(value, null, 2), "utf8");
+}
+
+function errorDetails(error) {
+  return error?.stack || error?.message || String(error);
 }
 
 function readTelegramMessages(file) {
@@ -630,60 +636,93 @@ function readUpdateOffset(offsetFile) {
   return state.offset;
 }
 
-async function runDirectMode({
+export async function runDirectMode({
   token,
   chatId,
   stateFile,
   offsetFile,
+  heartbeatFile = resolveFromCwd(DEFAULT_DIRECT_HEARTBEAT_FILE),
   dryRun,
   processExisting,
   once,
   retrySeconds,
-  failureWarnThreshold
+  failureWarnThreshold,
+  idleLogEvery = 20,
+  fetchUpdatesImpl = fetchUpdates,
+  logger = console
 }) {
   const savedOffset = readUpdateOffset(offsetFile);
   let skipHistorical = savedOffset == null && !processExisting;
   let offset = savedOffset ?? (skipHistorical ? -1 : 0);
   let consecutiveFailures = 0;
+  let emptyPolls = 0;
 
   while (true) {
     let updates;
     try {
-      updates = await fetchUpdates({ token, offset });
+      updates = await fetchUpdatesImpl({ token, offset });
       consecutiveFailures = 0;
     } catch (error) {
       consecutiveFailures += 1;
-      console.warn(`Telegram 直连拉取失败（连续 ${consecutiveFailures} 次）：${error.message || String(error)}`);
+      logger.error(`Telegram 直连拉取失败（连续 ${consecutiveFailures} 次）：\n${errorDetails(error)}`);
       if (consecutiveFailures === failureWarnThreshold) {
-        console.warn(`[Telegram 直连严重警告] getUpdates 已连续失败 ${failureWarnThreshold} 次，请检查网络和 Bot 状态。`);
+        logger.warn(`[Telegram 直连严重警告] getUpdates 已连续失败 ${failureWarnThreshold} 次，请检查网络和 Bot 状态。`);
       }
       await new Promise((resolve) => setTimeout(resolve, retrySeconds * 1000));
       continue;
     }
 
-    const messages = parseUpdates(updates);
-    let handled = 0;
-    if (skipHistorical) {
-      rememberMessageKeys(messages, stateFile);
-      offset = nextOffset(updates, 0);
-      skipHistorical = false;
-    } else {
-      handled = await processMessageList({
-        messages,
-        stateFile,
-        token,
-        chatId,
-        dryRun,
-        processExisting: true
+    let stage = "写入心跳";
+    try {
+      writeJson(heartbeatFile, {
+        atMs: Date.now(),
+        offset,
+        lastUpdates: updates.length
       });
-      offset = nextOffset(updates, offset);
-    }
-    writeJson(offsetFile, { offset });
 
-    if (updates.length > 0) {
-      console.log(`Telegram 直连拉取到 ${updates.length} 条新消息（文本 ${messages.length} 条，处理 ${handled} 条）。`);
+      stage = "解析 updates";
+      const messages = parseUpdates(updates);
+      let handled = 0;
+      if (skipHistorical) {
+        if (updates.length > 0) {
+          stage = "记录历史消息基线";
+          rememberMessageKeys(messages, stateFile);
+          stage = "计算 offset";
+          offset = nextOffset(updates, 0);
+          skipHistorical = false;
+          stage = "写入 offset";
+          writeJson(offsetFile, { offset });
+        }
+      } else {
+        stage = "处理消息";
+        handled = await processMessageList({
+          messages,
+          stateFile,
+          token,
+          chatId,
+          dryRun,
+          processExisting: true
+        });
+        stage = "计算 offset";
+        offset = nextOffset(updates, offset);
+        stage = "写入 offset";
+        writeJson(offsetFile, { offset });
+      }
+
+      if (updates.length > 0) {
+        emptyPolls = 0;
+        logger.log(`Telegram 直连拉取到 ${updates.length} 条新消息（文本 ${messages.length} 条，处理 ${handled} 条）。`);
+      } else {
+        emptyPolls += 1;
+        if (emptyPolls % idleLogEvery === 0) {
+          logger.log(`直连轮询存活（offset=${offset}）`);
+        }
+      }
+      if (once) return;
+    } catch (error) {
+      logger.error(`[Telegram 直连轮询异常：${stage}]\n${errorDetails(error)}`);
+      await new Promise((resolve) => setTimeout(resolve, retrySeconds * 1000));
     }
-    if (once) return;
   }
 }
 
@@ -708,10 +747,15 @@ async function main() {
   const messageFile = resolveFromCwd(process.env.OPENCLAW_TELEGRAM_MESSAGES_FILE || DEFAULT_MESSAGE_FILE);
   const stateFile = resolveFromCwd(process.env.OPENCLAW_TELEGRAM_BRIDGE_STATE_FILE || DEFAULT_STATE_FILE);
   const offsetFile = resolveFromCwd(DEFAULT_UPDATE_OFFSET_FILE);
+  const heartbeatFile = resolveFromCwd(DEFAULT_DIRECT_HEARTBEAT_FILE);
   const pollSeconds = envNumber("OPENCLAW_TELEGRAM_BRIDGE_POLL_SECONDS", 3);
   const failureWarnThreshold = Math.max(
     1,
     Math.trunc(envNumber("TELEGRAM_DIRECT_FAILURE_WARN_THRESHOLD", 5))
+  );
+  const idleLogEvery = Math.max(
+    1,
+    Math.trunc(envNumber("TELEGRAM_DIRECT_IDLE_LOG_EVERY", 20))
   );
 
   console.log(`当前模式：${directMode ? "Telegram 直连模式" : "OpenClaw 文件模式"}`);
@@ -723,11 +767,13 @@ async function main() {
       chatId,
       stateFile,
       offsetFile,
+      heartbeatFile,
       dryRun,
       processExisting,
       once,
       retrySeconds: pollSeconds,
-      failureWarnThreshold
+      failureWarnThreshold,
+      idleLogEvery
     });
     return;
   }
@@ -740,7 +786,13 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(error.stack || error.message);
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  main().catch((error) => {
+    if (boolEnv("TELEGRAM_DIRECT_MODE", false)) {
+      console.error(`[FATAL] 直连模式异常退出\n${errorDetails(error)}`);
+    } else {
+      console.error(errorDetails(error));
+    }
+    process.exitCode = 1;
+  });
+}
