@@ -120,7 +120,7 @@ test("worker falls back to Windows when Mac GUI control is offline", async (t) =
   });
 
   assert.equal(results[0].ok, true);
-  assert.deepEqual(probed, ["mac", "windows"]);
+  assert.deepEqual(probed, ["mac"]);
   assert.equal(localRuns, 1);
 });
 
@@ -151,12 +151,13 @@ test("worker keeps Outlook tasks on Windows even when Mac is online", async (t) 
   });
 
   assert.equal(results[0].ok, true);
-  assert.deepEqual(probed, ["windows"]);
+  assert.deepEqual(probed, []);
   assert.equal(localRuns, 1);
 });
 
-test("worker explains GUI unavailability when every candidate is offline", async (t) => {
-  const { tempDir } = setupTask(t, approvedGuiTask());
+test("worker keeps the local Windows GUI fallback online without probing it", async (t) => {
+  setupTask(t, approvedGuiTask());
+  let localRuns = 0;
 
   const results = await processCodexAutoQueue({
     notify: false,
@@ -165,15 +166,13 @@ test("worker explains GUI unavailability when every candidate is offline", async
       throw new Error("offline nodes should not receive the task");
     },
     async runCodexExec() {
-      throw new Error("offline nodes should not receive the task");
+      localRuns += 1;
+      return { result: "done" };
     }
   });
 
-  const resultText = fs.readFileSync(results[0].outFile, "utf8");
   assert.equal(results[0].ok, true);
-  assert.match(resultText, /Mac 卫星当前离线（可能休眠）/);
-  assert.match(resultText, /这台电脑也暂时不可用/);
-  assert.equal(resultText.includes(tempDir), false);
+  assert.equal(localRuns, 1);
 });
 
 test("Mac brain handles ordinary chat locally without SSH dispatch", async (t) => {
@@ -223,5 +222,5 @@ test("Mac brain tells the user when a Windows-only capability is offline", async
 
   const resultText = fs.readFileSync(results[0].outFile, "utf8");
   assert.equal(results[0].ok, true);
-  assert.match(resultText, /这个功能需要 Windows，但它当前离线/);
+  assert.match(resultText, /这个功能需要另一台电脑，它当前离线/);
 });

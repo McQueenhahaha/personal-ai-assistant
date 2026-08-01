@@ -5,7 +5,8 @@ import { pathToFileURL } from "node:url";
 import { createTask, ensureQueue, listPendingTasks } from "./queue.mjs";
 import { envNumber, loadEnv, projectRoot, resolveFromCwd } from "./env.mjs";
 import { OWNER_COMMAND_MENU } from "./openclaw/command-menu.mjs";
-import { macSatelliteHealth } from "./satellite/mac.mjs";
+import { resolveNodeId } from "./brain/supervisor.mjs";
+import { nodeRegistry, nodeStatus } from "./satellite/registry.mjs";
 import { appendAudit } from "./security/audit.mjs";
 import { isExpired, loadApprovals, resolveApproval, saveApprovals } from "./security/pending.mjs";
 import { classifyTask, TIER } from "./security/policy.mjs";
@@ -118,39 +119,54 @@ async function send(token, chatId, text, dryRun) {
   });
 }
 
-async function summarizeStatus() {
-  const dataDir = resolveFromCwd("./data");
-  const flags = ["assistant-desired-running.flag", "assistant-running.flag", "assistant-suspended-for-game.flag", "school-game-catchup-needed.flag"]
-    .map((name) => `${name}: ${fs.existsSync(path.join(dataDir, name)) ? "YES" : "NO"}`)
-    .join("\n");
-  const localInbox = process.env.LOCAL_QUEUE_INBOX || "./data/queues/local/inbox";
-  const codexInbox = process.env.CODEX_QUEUE_INBOX || "./data/queues/codex/inbox";
-  ensureQueue(localInbox);
-  ensureQueue(codexInbox);
-  let guiControlStatus;
-  try {
-    const health = await macSatelliteHealth();
-    if (health.online && health.agentRunning) {
-      guiControlStatus = "图形操控：可用（Mac 在线）";
-    } else {
-      const macDetail = health.online
-        ? "Mac 在线，但卫星代理未运行"
-        : `Mac 当前离线${health.error ? `：${health.error}` : ""}`;
-      guiControlStatus = `图形操控：可用（这台电脑可代劳；${macDetail}）`;
-    }
-  } catch (error) {
-    guiControlStatus = `图形操控：可用（这台电脑可代劳；Mac 状态探测失败：${error.message || String(error)}）`;
+function capabilityAvailability(capability, registry, statuses, selfId) {
+  if (registry[selfId].capabilities.includes(capability)) return "可用（本机）";
+  const remoteNodes = Object.values(registry)
+    .filter((node) => node.id !== selfId && node.capabilities.includes(capability));
+  if (remoteNodes.some((node) =>
+    statuses[node.id]?.online && statuses[node.id]?.agentRunning !== false)) {
+    return "需要另一台电脑，当前可用";
   }
+  if (remoteNodes.length > 0) return "这个功能需要另一台电脑，它当前离线";
+  return "当前不可用";
+}
+
+export async function summarizeStatus(dependencies = {}) {
+  const env = dependencies.env || process.env;
+  const platform = dependencies.platform || process.platform;
+  const selfId = dependencies.selfId || resolveNodeId(env, platform);
+  const dataDir = dependencies.dataDir || resolveFromCwd("./data");
+  const existsSync = dependencies.existsSync || fs.existsSync;
+  const ensureQueueImpl = dependencies.ensureQueue || ensureQueue;
+  const listPendingTasksImpl = dependencies.listPendingTasks || listPendingTasks;
+  const flags = ["assistant-desired-running.flag", "assistant-running.flag", "assistant-suspended-for-game.flag", "school-game-catchup-needed.flag"]
+    .map((name) => `${name}: ${existsSync(path.join(dataDir, name)) ? "YES" : "NO"}`)
+    .join("\n");
+  const localInbox = dependencies.localInbox || env.LOCAL_QUEUE_INBOX || "./data/queues/local/inbox";
+  const codexInbox = dependencies.codexInbox || env.CODEX_QUEUE_INBOX || "./data/queues/codex/inbox";
+  ensureQueueImpl(localInbox);
+  ensureQueueImpl(codexInbox);
+  const registry = nodeRegistry({ selfId, env, platform });
+  const statusImpl = dependencies.nodeStatus || nodeStatus;
+  const statusEntries = await Promise.all(Object.keys(registry).map(async (nodeId) => [
+    nodeId,
+    await statusImpl(nodeId, { selfId, probes: dependencies.probes, env, platform })
+  ]));
+  const statuses = Object.fromEntries(statusEntries);
+  const commonStatus = capabilityAvailability("files", registry, statuses, selfId);
+  const windowsStatus = capabilityAvailability("browser", registry, statuses, selfId);
+  const selfLabel = selfId === "mac" ? "这台 Mac" : "这台 Windows 电脑";
   return [
     "AI 助手状态",
     "",
+    `当前运行节点：${selfLabel}`,
+    "",
     flags,
     "",
-    `Local 队列待处理：${listPendingTasks(localInbox).length}`,
-    `Codex 队列待处理：${listPendingTasks(codexInbox).length}`,
-    "Canvas / Outlook / 系统维护：可用",
-    "文件 / 浏览器 / 屏幕 / Codex：可用",
-    guiControlStatus
+    `Local 队列待处理：${listPendingTasksImpl(localInbox).length}`,
+    `Codex 队列待处理：${listPendingTasksImpl(codexInbox).length}`,
+    `文件 / Codex / Canvas / 图形操控：${commonStatus}`,
+    `浏览器 / 屏幕查看 / Outlook / 系统维护：${windowsStatus}`
   ].join("\n");
 }
 
