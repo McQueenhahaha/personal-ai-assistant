@@ -7,6 +7,7 @@ import path from "node:path";
 import {
   pullSoul,
   pushSoul,
+  readSoulLease,
   SOUL_FILES
 } from "../src/brain/soul-sync.mjs";
 
@@ -55,7 +56,7 @@ test("pushSoul builds one injection-safe scp call from existing soul files only"
     "StrictHostKeyChecking=accept-new"
   ]);
   assert.deepEqual(calls[0].args.slice(6, -1), present.map((file) => path.join(repoRoot, file)));
-  assert.equal(calls[0].args.at(-1), `${CONNECTION.host}:~/pai-satellite/soul/`);
+  assert.equal(calls[0].args.at(-1), `${CONNECTION.host}:~/pai-brain/data/state/`);
 });
 
 test("pushSoul skips missing files and does not spawn scp when none exist", async (t) => {
@@ -74,8 +75,15 @@ test("pushSoul skips missing files and does not spawn scp when none exist", asyn
   assert.equal(calls, 0);
 });
 
-test("pullSoul uses recursive scp, parses known files, and removes its temp directory", async () => {
+test("pullSoul backs up local state, overwrites it from Mac, and removes its temp directory", async (t) => {
+  const repoRoot = await tempRepo(t);
   let pulledTempDir;
+  const localLease = {
+    holder: "windows",
+    heartbeatAt: "2026-08-01T00:00:00.000Z",
+    ttlSeconds: 90,
+    reason: "renew"
+  };
   const expectedLease = {
     holder: "mac",
     heartbeatAt: "2026-08-01T00:00:00.000Z",
@@ -83,8 +91,12 @@ test("pullSoul uses recursive scp, parses known files, and removes its temp dire
     reason: "renew"
   };
   const calls = [];
+  const leaseFile = path.join(repoRoot, "data", "state", "brain-lease.json");
+  await fsPromises.mkdir(path.dirname(leaseFile), { recursive: true });
+  await fsPromises.writeFile(leaseFile, JSON.stringify(localLease), "utf8");
 
   const contents = await pullSoul(CONNECTION, {
+    repoRoot,
     spawnSync: (command, args, options) => {
       calls.push({ command, args, options });
       pulledTempDir = args.at(-1);
@@ -103,11 +115,42 @@ test("pullSoul uses recursive scp, parses known files, and removes its temp dire
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0].args.slice(-3), [
     "-r",
-    `${CONNECTION.host}:~/pai-satellite/soul/.`,
+    `${CONNECTION.host}:~/pai-brain/data/state/.`,
     pulledTempDir
   ]);
   assert.equal(calls[0].options.shell, false);
   assert.equal(fs.existsSync(pulledTempDir), false);
+  assert.deepEqual(JSON.parse(await fsPromises.readFile(leaseFile, "utf8")), expectedLease);
+  assert.deepEqual(
+    JSON.parse(await fsPromises.readFile(path.join(repoRoot, "data", "state", ".backup", "brain-lease.json"), "utf8")),
+    localLease
+  );
+});
+
+test("readSoulLease reads only the Mac project lease over Windows-initiated SSH", async () => {
+  const expectedLease = {
+    holder: "mac",
+    heartbeatAt: "2026-08-01T00:00:00.000Z",
+    ttlSeconds: 90,
+    reason: "renew"
+  };
+  const calls = [];
+
+  const result = await readSoulLease(CONNECTION, {
+    spawnSync(command, args, options) {
+      calls.push({ command, args, options });
+      return { status: 0, stdout: JSON.stringify(expectedLease), stderr: "" };
+    }
+  });
+
+  assert.deepEqual(result, expectedLease);
+  assert.equal(calls[0].command, "ssh");
+  assert.deepEqual(calls[0].args.slice(-3), [
+    CONNECTION.host,
+    "cat",
+    "~/pai-brain/data/state/brain-lease.json"
+  ]);
+  assert.equal(calls[0].options.shell, false);
 });
 
 test("pushSoul and pullSoul surface clear scp failures", async (t) => {
@@ -126,7 +169,7 @@ test("pushSoul and pullSoul surface clear scp failures", async (t) => {
     /推送灵魂包失败：connection refused/
   );
   await assert.rejects(
-    pullSoul(CONNECTION, { spawnSync: fail }),
+    pullSoul(CONNECTION, { repoRoot, spawnSync: fail }),
     /拉取灵魂包失败：connection refused/
   );
 });

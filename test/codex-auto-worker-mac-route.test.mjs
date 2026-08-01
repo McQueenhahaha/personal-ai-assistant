@@ -5,11 +5,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { processCodexAutoQueue } from "../src/codex-auto-worker.mjs";
 
-function setupTask(t, task) {
+function setupTask(t, task, brainNodeId = "windows") {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pai-capability-route-"));
   const inbox = path.join(tempDir, "queues", "inbox");
   const env = {
     AUDIT_LOG_FILE: path.join(tempDir, "audit.jsonl"),
+    BRAIN_NODE_ID: brainNodeId,
     CODEX_AUTO_IGNORE_LOCK: "1",
     CODEX_AUTO_LOCK_FILE: path.join(tempDir, "worker.lock"),
     CODEX_AUTO_MAX_TASKS: "1",
@@ -173,4 +174,54 @@ test("worker explains GUI unavailability when every candidate is offline", async
   assert.match(resultText, /Mac 卫星当前离线（可能休眠）/);
   assert.match(resultText, /这台电脑也暂时不可用/);
   assert.equal(resultText.includes(tempDir), false);
+});
+
+test("Mac brain handles ordinary chat locally without SSH dispatch", async (t) => {
+  setupTask(t, {
+    id: "mac-local-chat",
+    title: "Mac local chat",
+    taskType: "telegram-chat",
+    source: "test",
+    prompt: "帮我整理一下今天的学习计划"
+  }, "mac");
+  let localRuns = 0;
+
+  const results = await processCodexAutoQueue({
+    notify: false,
+    async dispatchToMac() {
+      throw new Error("Mac brain must not SSH-dispatch an ordinary task to itself");
+    },
+    async runClaudeChat() {
+      localRuns += 1;
+      return "done";
+    }
+  });
+
+  assert.equal(results[0].ok, true);
+  assert.equal(localRuns, 1);
+});
+
+test("Mac brain tells the user when a Windows-only capability is offline", async (t) => {
+  setupTask(t, {
+    id: "mac-outlook-offline",
+    title: "Mac Outlook offline",
+    taskType: "telegram-chat",
+    source: "test",
+    prompt: "看看 Outlook 里有哪些未读邮件"
+  }, "mac");
+
+  const results = await processCodexAutoQueue({
+    notify: false,
+    nodeProbe: async () => false,
+    async dispatchToMac() {
+      throw new Error("Windows-only task must not run on Mac");
+    },
+    async runClaudeChat() {
+      throw new Error("Windows-only task must not run locally on Mac");
+    }
+  });
+
+  const resultText = fs.readFileSync(results[0].outFile, "utf8");
+  assert.equal(results[0].ok, true);
+  assert.match(resultText, /这个功能需要 Windows，但它当前离线/);
 });

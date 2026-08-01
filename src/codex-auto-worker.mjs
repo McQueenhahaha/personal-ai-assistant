@@ -708,7 +708,7 @@ export async function processCodexAutoQueue({
                 approvalId: task.metadata?.approvalId
               });
             }
-          } else if (selection.nodeId === "mac") {
+          } else if (selection.nodeId === "mac" && selection.brainNodeId !== "mac") {
             const macResult = await dispatchMac({
               prompt: executionTask.prompt,
               kind: capability === "gui-control" && isApprovedPrivileged

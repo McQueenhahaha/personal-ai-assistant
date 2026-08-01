@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
-const REMOTE_SOUL_DIR = "~/pai-satellite/soul/";
+const REMOTE_SOUL_DIR = "~/pai-brain/data/state/";
 const SCP_TIMEOUT_MS = 30000;
 
 export const SOUL_FILES = Object.freeze([
@@ -66,6 +66,15 @@ function runScp(spawnSyncImpl, args) {
   });
 }
 
+function runSsh(spawnSyncImpl, args) {
+  return spawnSyncImpl("ssh", args, {
+    encoding: "utf8",
+    shell: false,
+    windowsHide: true,
+    timeout: SCP_TIMEOUT_MS
+  });
+}
+
 function assertSuccess(result, label) {
   if (result?.error || result?.status !== 0) {
     throw new Error(`${label}：${failureDetail(result)}`);
@@ -92,10 +101,27 @@ export async function pushSoul({ host, key }, dependencies = {}) {
   return { pushed: localFiles.map((file) => path.basename(file)) };
 }
 
+function backupLocalSoul(fsImpl, repoRoot) {
+  const backupDir = path.join(repoRoot, "data", "state", ".backup");
+  fsImpl.rmSync(backupDir, { recursive: true, force: true });
+  fsImpl.mkdirSync(backupDir, { recursive: true });
+  const backedUp = [];
+  for (const relativeFile of SOUL_FILES) {
+    const localFile = path.join(repoRoot, relativeFile);
+    if (!fsImpl.existsSync(localFile)) continue;
+    const name = path.basename(relativeFile);
+    fsImpl.copyFileSync(localFile, path.join(backupDir, name));
+    backedUp.push(name);
+  }
+  return backedUp;
+}
+
 export async function pullSoul({ host, key }, dependencies = {}) {
   const connection = validateConnection(host, key);
+  const repoRoot = dependencies.repoRoot || REPO_ROOT;
   const fsImpl = dependencies.fs || fs;
   const spawnSyncImpl = dependencies.spawnSync || spawnSync;
+  backupLocalSoul(fsImpl, repoRoot);
   const tempDir = fsImpl.mkdtempSync(path.join(os.tmpdir(), "pai-soul-pull-"));
 
   try {
@@ -108,18 +134,43 @@ export async function pullSoul({ host, key }, dependencies = {}) {
     assertSuccess(result, "拉取灵魂包失败");
 
     const contents = {};
+    const pulledFiles = [];
     for (const relativeFile of SOUL_FILES) {
       const localFile = path.join(tempDir, path.basename(relativeFile));
       if (!fsImpl.existsSync(localFile)) continue;
       try {
         const text = fsImpl.readFileSync(localFile, "utf8").replace(/^\uFEFF/, "");
         contents[relativeFile] = JSON.parse(text);
+        pulledFiles.push({ relativeFile, localFile });
       } catch (error) {
         throw new Error(`解析远端灵魂包文件 ${path.basename(relativeFile)} 失败：${error.message || String(error)}`);
       }
     }
+
+    for (const { relativeFile, localFile } of pulledFiles) {
+      const destination = path.join(repoRoot, relativeFile);
+      fsImpl.mkdirSync(path.dirname(destination), { recursive: true });
+      fsImpl.copyFileSync(localFile, destination);
+    }
     return contents;
   } finally {
     fsImpl.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+export async function readSoulLease({ host, key }, dependencies = {}) {
+  const connection = validateConnection(host, key);
+  const spawnSyncImpl = dependencies.spawnSync || spawnSync;
+  const result = runSsh(spawnSyncImpl, [
+    ...scpBaseArgs(connection.key),
+    connection.host,
+    "cat",
+    `${REMOTE_SOUL_DIR}brain-lease.json`
+  ]);
+  assertSuccess(result, "读取远端大脑租约失败");
+  try {
+    return JSON.parse(String(result.stdout || "").replace(/^\uFEFF/, ""));
+  } catch (error) {
+    throw new Error(`解析远端大脑租约失败：${error.message || String(error)}`);
   }
 }
