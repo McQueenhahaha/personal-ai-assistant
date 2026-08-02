@@ -126,7 +126,7 @@ function logStateChange(state, details) {
   appendLog({ state, event: "state-change", ...details });
 }
 
-export function stopBridge(pids) {
+export function buildStopBridgeCommand(pids) {
   if (!Array.isArray(pids)) {
     throw new Error("Bridge stop requires a PID array");
   }
@@ -135,19 +135,26 @@ export function stopBridge(pids) {
   if (uniquePids.some((pid) => !Number.isInteger(pid) || pid <= 0)) {
     throw new Error("Bridge stop received an invalid PID");
   }
-  if (uniquePids.length === 0) return;
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    `$knownBridgePids = @(${uniquePids.join(", ")})`,
+    "$stopFailures = @()",
+    "$keepaliveProcesses = @(Get-CimInstance Win32_Process -Filter \"Name = 'powershell.exe'\" | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -and $_.CommandLine -like '*run-openclaw-telegram-bridge.ps1*' })",
+    "foreach ($keepaliveProcess in $keepaliveProcesses) { $keepalivePid = [int]$keepaliveProcess.ProcessId; try { Stop-Process -Id $keepalivePid -Force -ErrorAction Stop } catch { if (Get-Process -Id $keepalivePid -ErrorAction SilentlyContinue) { $stopFailures += $_.Exception.Message } } }",
+    "foreach ($keepaliveProcess in $keepaliveProcesses) { $keepalivePid = [int]$keepaliveProcess.ProcessId; if (Get-Process -Id $keepalivePid -ErrorAction SilentlyContinue) { try { Wait-Process -Id $keepalivePid -Timeout 5 -ErrorAction Stop } catch { if (Get-Process -Id $keepalivePid -ErrorAction SilentlyContinue) { $stopFailures += $_.Exception.Message } } } }",
+    "$runningBridgePids = @(Get-CimInstance Win32_Process -Filter \"Name = 'node.exe'\" | Where-Object { $_.CommandLine -and $_.CommandLine -like '*openclaw-telegram-bridge*' } | ForEach-Object { [int]$_.ProcessId })",
+    "$bridgePids = @(($knownBridgePids + $runningBridgePids) | Sort-Object -Unique)",
+    "foreach ($bridgePid in $bridgePids) { try { Stop-Process -Id $bridgePid -Force -ErrorAction Stop } catch { if (Get-Process -Id $bridgePid -ErrorAction SilentlyContinue) { $stopFailures += $_.Exception.Message } } }",
+    "if ($stopFailures.Count -gt 0) { throw ($stopFailures -join '; ') }"
+  ].join("; ");
+}
 
+export function stopBridge(pids) {
   if (process.platform !== "win32") {
     throw new Error("Stopping the bridge is only supported on Windows");
   }
 
-  const command = [
-    "$ErrorActionPreference = 'Stop'",
-    `$bridgePids = @(${uniquePids.join(", ")})`,
-    "$stopFailures = @()",
-    "foreach ($bridgePid in $bridgePids) { try { Stop-Process -Id $bridgePid -Force -ErrorAction Stop } catch { if (Get-Process -Id $bridgePid -ErrorAction SilentlyContinue) { $stopFailures += $_.Exception.Message } } }",
-    "if ($stopFailures.Count -gt 0) { throw ($stopFailures -join '; ') }"
-  ].join("; ");
+  const command = buildStopBridgeCommand(pids);
   const result = spawnSync("powershell.exe", ["-NoProfile", "-Command", command], {
     encoding: "utf8",
     timeout: 10_000,
@@ -298,7 +305,7 @@ export async function main() {
 
   let restartError = null;
   try {
-    if (beforePids?.length > 0) {
+    if (beforePids !== null) {
       stopBridge(beforePids);
       await new Promise((resolve) => setTimeout(resolve, STOP_SETTLE_DELAY_MS));
     }

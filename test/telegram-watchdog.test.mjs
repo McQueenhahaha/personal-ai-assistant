@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   DEFAULT_STALE_MS,
+  buildStopBridgeCommand,
   decideBridgeAction,
   readHeartbeat,
   verifyRestart
@@ -155,4 +156,24 @@ test("verifyRestart does not regress to checking only whether a process exists",
     beforePids: [15920],
     afterPids: [15920]
   }), { ok: false, reason: "not-restarted" });
+});
+
+test("stop command stops the PowerShell keepalive before finding bridge nodes", () => {
+  const command = buildStopBridgeCommand([101]);
+
+  assert.match(command, /Name = 'powershell\.exe'/);
+  assert.match(command, /run-openclaw-telegram-bridge\.ps1/);
+  assert.match(command, /\$_\.ProcessId -ne \$PID/);
+  assert.ok(
+    command.indexOf("Stop-Process -Id $keepalivePid") <
+      command.indexOf("$runningBridgePids = @(")
+  );
+  assert.match(command, /\$knownBridgePids \+ \$runningBridgePids/);
+});
+
+test("stop command still targets the keepalive when no bridge node was found", () => {
+  const command = buildStopBridgeCommand([]);
+
+  assert.match(command, /\$knownBridgePids = @\(\)/);
+  assert.match(command, /Stop-Process -Id \$keepalivePid/);
 });
