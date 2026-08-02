@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MODULE_PATH = path.join(ROOT, "scripts", "bridge-keepalive.psm1");
 const RUNNER_PATH = path.join(ROOT, "scripts", "run-openclaw-telegram-bridge.ps1");
+const SUPERVISOR_RUNNER_PATH = path.join(ROOT, "scripts", "run-brain-supervisor.ps1");
 
 function readRestartStates() {
   const escapedModulePath = MODULE_PATH.replaceAll("'", "''");
@@ -51,6 +52,20 @@ test("bridge runner wires args and UTF-8 restart-only logging into its loop", ()
   assert.match(script, /openclaw-telegram-bridge\.mjs @args/);
   assert.match(script, /Get-BridgeRestartState/);
   assert.match(script, /bridge-keepalive\.log/);
+  assert.match(script, /UTF8Encoding/);
+  assert.match(script, /AppendAllText/);
+});
+
+test("brain supervisor runner reuses bridge backoff with UTF-8 restart-only logging", () => {
+  const bytes = fs.readFileSync(SUPERVISOR_RUNNER_PATH);
+  const script = bytes.toString("utf8");
+
+  assert.deepEqual([...bytes.subarray(0, 3)], [0xef, 0xbb, 0xbf]);
+  assert.match(script, /Import-Module .*bridge-keepalive\.psm1/);
+  assert.match(script, /while \(\$true\)/);
+  assert.match(script, /brain\\supervisor\.mjs @args/);
+  assert.match(script, /Get-BridgeRestartState/);
+  assert.match(script, /brain-supervisor-keepalive\.log/);
   assert.match(script, /UTF8Encoding/);
   assert.match(script, /AppendAllText/);
 });
