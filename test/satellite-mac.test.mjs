@@ -107,6 +107,38 @@ test("dispatchToMac uploads with argument arrays, polls, parses, and cleans up",
   ]);
 });
 
+test("dispatchToMac returns the fetched result when remote cleanup fails", async () => {
+  const logs = [];
+  const expectedResult = {
+    id: ID,
+    ok: true,
+    result: "done",
+    error: "",
+    startedAt: STARTED_AT,
+    finishedAt: FINISHED_AT
+  };
+  const fakeSpawnSync = (command, args) => {
+    if (command === "scp") return { status: 0, stdout: "", stderr: "" };
+    if (args.includes("cat")) {
+      return { status: 0, stdout: JSON.stringify(expectedResult), stderr: "" };
+    }
+    if (args.includes("rm")) {
+      return { status: 255, stdout: "", stderr: "connection reset" };
+    }
+    throw new Error("unexpected call");
+  };
+
+  const actual = await dispatchToMac(
+    { prompt: "test", kind: "mac-general" },
+    dependencies(fakeSpawnSync, { logError: (line) => { logs.push(line); } })
+  );
+
+  assert.deepEqual(actual, expectedResult);
+  assert.equal(logs.length, 1);
+  assert.match(logs[0], new RegExp(`pai-satellite/outbox/${ID}\\.json`));
+  assert.match(logs[0], /connection reset/);
+});
+
 test("dispatchToMac times out after task timeout plus SSH grace", async () => {
   let clock = 0;
   const calls = [];
@@ -126,21 +158,27 @@ test("dispatchToMac times out after task timeout plus SSH grace", async () => {
   assert.equal(calls.some(({ args }) => args.includes("rm")), false);
 });
 
-test("dispatchToMac cleans up a fetched result even when parsing fails", async () => {
+test("dispatchToMac cleanup failure does not mask a result parsing error", async () => {
   const calls = [];
+  const logs = [];
   const fakeSpawnSync = (command, args) => {
     calls.push({ command, args });
     if (command === "scp") return { status: 0, stdout: "", stderr: "" };
     if (args.includes("cat")) return { status: 0, stdout: "not-json", stderr: "" };
-    if (args.includes("rm")) return { status: 0, stdout: "", stderr: "" };
+    if (args.includes("rm")) return { status: 255, stdout: "", stderr: "cleanup failed" };
     throw new Error("unexpected call");
   };
 
   await assert.rejects(
-    dispatchToMac({ prompt: "test", kind: "mac-general" }, dependencies(fakeSpawnSync)),
+    dispatchToMac(
+      { prompt: "test", kind: "mac-general" },
+      dependencies(fakeSpawnSync, { logError: (line) => { logs.push(line); } })
+    ),
     /无效 JSON/
   );
   assert.equal(calls.some(({ args }) => args.includes("rm")), true);
+  assert.equal(logs.length, 1);
+  assert.match(logs[0], /cleanup failed/);
 });
 
 test("dispatchToMac reports scp failure and returns a remote task failure", async () => {

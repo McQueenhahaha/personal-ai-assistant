@@ -42,11 +42,37 @@ export function listPendingTasks(inboxPath) {
     .sort((a, b) => a.stat.mtimeMs - b.stat.mtimeMs);
 }
 
+export function listProcessingTasks(inboxPath) {
+  const dirs = ensureQueue(inboxPath);
+  return fs
+    .readdirSync(dirs.processing, { withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .filter((entry) => TASK_EXTENSIONS.has(path.extname(entry.name).toLowerCase()))
+    .map((entry) => ({
+      file: path.join(dirs.processing, entry.name),
+      name: entry.name
+    }));
+}
+
 export function claimTask(task, inboxPath) {
   const dirs = ensureQueue(inboxPath);
   const claimed = path.join(dirs.processing, `${timestampForFile()}-${task.name}`);
   fs.renameSync(task.file, claimed);
   return claimed;
+}
+
+export function requeueTask(taskFile, inboxPath) {
+  const dirs = ensureQueue(inboxPath);
+  const requeued = path.join(dirs.inbox, path.basename(taskFile));
+  fs.renameSync(taskFile, requeued);
+  return requeued;
+}
+
+export function decideOrphanAction(task) {
+  if (["telegram-chat", "study-distill"].includes(task?.taskType)) {
+    return { action: "requeue", reason: "safe-to-retry" };
+  }
+  return { action: "fail", reason: "possible-side-effects" };
 }
 
 export function readTask(file) {

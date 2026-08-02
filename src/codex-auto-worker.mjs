@@ -25,7 +25,17 @@ import {
   TIER
 } from "./security/policy.mjs";
 import { redactSensitive } from "./security/redact.mjs";
-import { claimTask, ensureQueue, listPendingTasks, readTask, writeFailure, writeResult } from "./queue.mjs";
+import {
+  claimTask,
+  decideOrphanAction,
+  ensureQueue,
+  listPendingTasks,
+  listProcessingTasks,
+  readTask,
+  requeueTask,
+  writeFailure,
+  writeResult
+} from "./queue.mjs";
 import { sendTelegramDocument, sendTelegramMessage } from "./telegram.mjs";
 
 function envNumber(name, fallback) {
@@ -41,6 +51,48 @@ function boolEnv(name, fallback = false) {
 
 function codexEntrypoint(root) {
   return path.join(root, "node_modules", "@openai", "codex", "bin", "codex.js");
+}
+
+export function decideLockState({ lockContent, lockMtimeMs, nowMs, staleMs, isPidAlive }) {
+  let lock;
+  try {
+    lock = JSON.parse(lockContent);
+  } catch {
+    lock = null;
+  }
+
+  const pid = lock?.pid;
+  const stale = nowMs - lockMtimeMs >= staleMs;
+  if (!Number.isSafeInteger(pid) || pid <= 0) {
+    return stale
+      ? { action: "proceed", reason: "unparsable-fallback-proceed" }
+      : { action: "wait", reason: "unparsable-fallback-wait" };
+  }
+  if (stale) return { action: "proceed", reason: "stale-mtime" };
+
+  let holderAlive = false;
+  try {
+    holderAlive = Boolean(isPidAlive(pid));
+  } catch {
+    // If the holder cannot be confirmed as this worker, prefer clearing the lock.
+  }
+  return holderAlive
+    ? { action: "wait", reason: "holder-alive" }
+    : { action: "proceed", reason: "holder-dead" };
+}
+
+export function isWorkerPidAlive(pid, spawnSyncImpl = spawnSync) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  const command = [
+    `$process = Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}" -ErrorAction SilentlyContinue`,
+    "if ($null -ne $process) { [Console]::Out.Write([string]$process.CommandLine) }"
+  ].join("\n");
+  const result = spawnSyncImpl(
+    "powershell.exe",
+    ["-NoProfile", "-Command", command],
+    { encoding: "utf8", shell: false, windowsHide: true }
+  );
+  return !result?.error && result?.status === 0 && /codex-auto-worker\.mjs/i.test(String(result.stdout || ""));
 }
 
 const FORCE_NODE_DIRECTIVE = /^\s*\[force-node:(mac|windows)\]\s*/i;
@@ -505,6 +557,64 @@ function recordNotificationFailure({ task, outFile, failure, appendAuditImpl, lo
   }
 }
 
+export async function recoverOrphanedTasks({
+  inboxPath,
+  notify = true,
+  appendAudit: appendAuditImpl = appendAudit,
+  sendTelegramMessage: sendMessage = sendTelegramMessage,
+  logError = console.error
+} = {}) {
+  const recovered = [];
+  for (const item of listProcessingTasks(inboxPath)) {
+    let task;
+    try {
+      task = readTask(item.file);
+    } catch (error) {
+      task = {
+        id: item.name,
+        title: item.name,
+        taskType: null,
+        prompt: ""
+      };
+      logError(`[codex-auto-worker] 读取孤儿任务失败，将按高风险任务处理：${item.file}；${error.message || String(error)}`);
+    }
+
+    const decision = decideOrphanAction(task);
+    let destination;
+    if (decision.action === "requeue") {
+      destination = requeueTask(item.file, inboxPath);
+    } else {
+      destination = writeFailure({
+        inboxPath,
+        taskFile: item.file,
+        task,
+        error: new Error("任务被中断（进程终止），未完成")
+      });
+    }
+
+    appendAuditImpl({
+      kind: "orphan-recovery",
+      reason: `taskId=${task.id}; ${decision.reason}`,
+      promptPreview: task.prompt,
+      result: decision.action === "requeue" ? "requeued" : "failed"
+    });
+
+    if (notify) {
+      const message = decision.action === "requeue"
+        ? `检测到任务被中断（进程终止），已重新排队：${task.title}`
+        : `检测到任务被中断（进程终止），为避免重复执行已标记失败：${task.title}`;
+      try {
+        await sendMessage(message);
+      } catch (error) {
+        logError(`[codex-auto-worker] 孤儿任务恢复通知失败：taskId=${task.id}；${error.message || String(error)}`);
+      }
+    }
+
+    recovered.push({ task, ...decision, destination });
+  }
+  return recovered;
+}
+
 function runCodexExec({ root, prompt, taskStem, onProgress }) {
   const entrypoint = codexEntrypoint(root);
   if (!fs.existsSync(entrypoint)) {
@@ -609,6 +719,8 @@ export async function processCodexAutoQueue({
   runCodexExec: runCodex = runCodexExec,
   sendTelegramDocument: sendDocument = sendTelegramDocument,
   sendTelegramMessage: sendMessage = sendTelegramMessage,
+  isPidAlive: checkPidAlive = isWorkerPidAlive,
+  log = console.log,
   logError = console.error
 } = {}) {
   loadEnv();
@@ -629,19 +741,43 @@ export async function processCodexAutoQueue({
   if (fs.existsSync(lockFile) && !boolEnv("CODEX_AUTO_IGNORE_LOCK", false)) {
     const stat = fs.statSync(lockFile);
     const staleMs = envNumber("CODEX_AUTO_LOCK_STALE_MINUTES", 120) * 60 * 1000;
-    if (Date.now() - stat.mtimeMs < staleMs) {
-      console.log(`Codex auto worker lock exists: ${lockFile}`);
+    const lockContent = fs.readFileSync(lockFile, "utf8");
+    const decision = decideLockState({
+      lockContent,
+      lockMtimeMs: stat.mtimeMs,
+      nowMs: Date.now(),
+      staleMs,
+      isPidAlive: checkPidAlive
+    });
+    if (decision.action === "wait") {
+      log(`Codex auto worker lock exists: ${lockFile} (${decision.reason})`);
       return [];
+    }
+    if (decision.reason === "holder-dead") {
+      const holderPid = JSON.parse(lockContent).pid;
+      log(`[codex-auto-worker] 清理已终止 worker 的残留锁：pid=${holderPid}；${lockFile}`);
     }
     fs.rmSync(lockFile, { force: true });
   }
 
   fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }, null, 2), "utf8");
 
-  const pending = listPendingTasks(inboxPath).slice(0, maxTasks);
   const results = [];
 
   try {
+    try {
+      await recoverOrphanedTasks({
+        inboxPath,
+        notify,
+        appendAudit: appendAuditImpl,
+        sendTelegramMessage: sendMessage,
+        logError
+      });
+    } catch (error) {
+      logError(`[codex-auto-worker] 孤儿任务恢复扫描失败，继续处理正常队列：${error.message || String(error)}`);
+    }
+
+    const pending = listPendingTasks(inboxPath).slice(0, maxTasks);
     for (const item of pending) {
       const claimed = claimTask(item, inboxPath);
       let task;

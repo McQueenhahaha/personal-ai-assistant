@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   claimTask,
   createTask,
+  decideOrphanAction,
   ensureQueue,
   listPendingTasks,
   queueDirs,
@@ -176,6 +177,13 @@ test("writeFailure moves the task to failed and writes an error file with stack 
   assert.match(output, /Error: boom/);
   assert.equal(fs.existsSync(taskFile), false);
   assert.equal(fs.existsSync(path.join(dirs.failed, "task.txt")), true);
+});
+
+test("decideOrphanAction requeues only retry-safe question-answer tasks", () => {
+  assert.equal(decideOrphanAction({ taskType: "telegram-chat" }).action, "requeue");
+  assert.equal(decideOrphanAction({ taskType: "study-distill" }).action, "requeue");
+  assert.equal(decideOrphanAction({ taskType: "approved-privileged" }).action, "fail");
+  assert.equal(decideOrphanAction({ taskType: "unknown-type" }).action, "fail");
 });
 
 test("writeResult still writes output when the source task no longer exists", (t) => {

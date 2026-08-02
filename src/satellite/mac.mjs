@@ -107,6 +107,7 @@ export async function dispatchToMac({ prompt, kind, timeoutMs } = {}, dependenci
   const spawnSyncImpl = dependencies.spawnSync || spawnSync;
   const sleep = dependencies.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const now = dependencies.now || Date.now;
+  const logError = dependencies.logError || console.error;
   const id = (dependencies.randomUUID || randomUUID)();
   const { host, key } = resolveConfig(dependencies);
   const args = sshBaseArgs(key);
@@ -141,13 +142,23 @@ export async function dispatchToMac({ prompt, kind, timeoutMs } = {}, dependenci
         try {
           parsed = parseSatelliteResult(fetchResult.stdout, id);
         } finally {
-          const cleanup = run(
-            spawnSyncImpl,
-            "ssh",
-            [...args, host, "rm", "-f", remoteOutboxFile],
-            Math.min(15000, Math.max(1, deadline - now()))
-          );
-          assertSuccess(cleanup, "清理 Mac 卫星结果");
+          try {
+            const cleanup = run(
+              spawnSyncImpl,
+              "ssh",
+              [...args, host, "rm", "-f", remoteOutboxFile],
+              Math.min(15000, Math.max(1, deadline - now()))
+            );
+            if (cleanup?.error || cleanup?.status !== 0) {
+              logError(`[mac-satellite] 清理远端结果文件失败：${remoteOutboxFile}；${describeFailure(cleanup)}`);
+            }
+          } catch (error) {
+            try {
+              logError(`[mac-satellite] 清理远端结果文件失败：${remoteOutboxFile}；${error.message || String(error)}`);
+            } catch {
+              // Best-effort cleanup and logging must not replace the task result.
+            }
+          }
         }
         return parsed;
       }
