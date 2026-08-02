@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Continue"
+﻿$ErrorActionPreference = "Continue"
 . "$PSScriptRoot\openclaw-env.ps1"
 
 $Root = Split-Path -Parent $PSScriptRoot
@@ -44,6 +44,16 @@ try {
   & "$PSScriptRoot\start-codex-auto-worker-hidden.ps1" *> (Join-Path $LogDir "start-codex-auto-worker.log")
 } catch {
   $_ | Out-File -FilePath (Join-Path $LogDir "start-codex-auto-worker.err.log") -Append
+}
+
+# P5.5 游走大脑：必须启动，否则 Windows 回来不会自动收回大脑，
+# "Windows 挂了 Mac 接管" 这条 HA 路径也是关着的（2026-08-02 前一直漏挂）。
+# 放在桥之后启动：supervisor 的 ensureBrainServices 会确保桥在跑，先后顺序不冲突。
+# start-brain-supervisor-hidden.ps1 自带 "already running" 守卫，可重复调用。
+try {
+  & "$PSScriptRoot\start-brain-supervisor-hidden.ps1" *> (Join-Path $LogDir "start-brain-supervisor.log")
+} catch {
+  $_ | Out-File -FilePath (Join-Path $LogDir "start-brain-supervisor.err.log") -Append
 }
 
 try {
