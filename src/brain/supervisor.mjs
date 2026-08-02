@@ -20,6 +20,10 @@ const REMOTE_LEASE_KEY = "data/state/brain-lease.json";
 const ROUND_INTERVAL_MS = 30000;
 const MIN_UNREACHABLE_STREAK = 3;
 const MAC_HOST_PLACEHOLDER = "user@100.x.y.z";
+const DEFAULT_TAILSCALE_BINS = [
+  "/usr/local/bin/tailscale",
+  "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+];
 
 export function resolveNodeId(env = process.env, platform = process.platform) {
   const configured = String(env.BRAIN_NODE_ID || "").trim().toLowerCase();
@@ -208,17 +212,43 @@ export async function ensureBrainServices(shouldRun, dependencies = {}) {
   throw new Error(`不支持在 ${platform} 上管理大脑服务`);
 }
 
+function peerProbeResult(reachable, determined, detail) {
+  const result = { reachable, determined, detail };
+  // The satellite registry still reads `online`; keep that caller compatible
+  // without adding a fourth field to the probe result contract.
+  Object.defineProperty(result, "online", { value: reachable, enumerable: false });
+  return result;
+}
+
 export function windowsPeerReachable(dependencies = {}) {
   const env = dependencies.env || process.env;
   const peerIp = String(env.PEER_TAILSCALE_IP || "").trim();
   if (!peerIp) {
     dependencies.onMissingPeerIp?.();
-    return false;
+    return peerProbeResult(false, false, "PEER_TAILSCALE_IP 未配置");
   }
+
+  const fsImpl = dependencies.fs || fs;
+  const configuredBin = String(env.TAILSCALE_BIN || "").trim();
+  const candidates = [configuredBin, ...DEFAULT_TAILSCALE_BINS].filter(Boolean);
+  let tailscaleBin;
+  try {
+    tailscaleBin = candidates.find((candidate) => fsImpl.existsSync(candidate));
+  } catch (error) {
+    return peerProbeResult(
+      false,
+      false,
+      `检查 tailscale 可执行文件失败：${error.message || String(error)}`
+    );
+  }
+  if (!tailscaleBin) {
+    return peerProbeResult(false, false, `未找到 tailscale 可执行文件（已检查：${candidates.join("、")}）`);
+  }
+
   const spawnSyncImpl = dependencies.spawnSync || spawnSync;
   try {
     const result = spawnSyncImpl(
-      "/usr/local/bin/tailscale",
+      tailscaleBin,
       ["ping", "--c=1", "--timeout=5s", peerIp],
       {
         encoding: "utf8",
@@ -226,20 +256,51 @@ export function windowsPeerReachable(dependencies = {}) {
         timeout: 10000
       }
     );
-    return !result?.error && result?.status === 0;
-  } catch {
-    return false;
+    const output = [result?.stdout, result?.stderr]
+      .map((value) => String(value || ""))
+      .join("\n");
+    const pong = output.split(/\r?\n/).find((line) => /pong from/i.test(line));
+    if (pong) return peerProbeResult(true, true, pong.trim());
+
+    if (result?.error) {
+      const errorDetail = [result.error.code, result.error.message]
+        .filter(Boolean)
+        .join(" ");
+      return peerProbeResult(false, false, `tailscale 探测失败：${errorDetail || String(result.error)}`);
+    }
+    if (result?.signal) {
+      return peerProbeResult(false, false, `tailscale 探测被信号 ${result.signal} 终止`);
+    }
+    if (!Number.isInteger(result?.status)) {
+      return peerProbeResult(false, false, "tailscale 探测未正常结束");
+    }
+
+    const detail = output.replace(/\s+/g, " ").trim();
+    return peerProbeResult(
+      false,
+      true,
+      detail ? `未收到 pong from：${detail}` : `未收到 pong from（退出码 ${result.status}）`
+    );
+  } catch (error) {
+    return peerProbeResult(false, false, `tailscale 探测失败：${error.message || String(error)}`);
   }
 }
 
 async function probePeer(selfId, peerConnection, dependencies) {
   if (selfId === "windows") {
-    if (!peerConnection) return false;
+    if (!peerConnection) return peerProbeResult(false, false, "Mac 对端连接未配置");
     const health = await (dependencies.macSatelliteHealth || macSatelliteHealth)({
       env: dependencies.env || process.env,
       homedir: dependencies.homedir || os.homedir
     });
-    return health.online === true;
+    if (typeof health?.online !== "boolean") {
+      return peerProbeResult(false, false, "Mac 对端探活未返回有效结果");
+    }
+    return peerProbeResult(
+      health.online,
+      true,
+      health.error || (health.online ? "Mac 对端已应答" : "Mac 对端未应答")
+    );
   }
   return windowsPeerReachable(dependencies);
 }
@@ -268,24 +329,21 @@ export async function runSupervisorRound(state = {}, dependencies = {}) {
   const ensureBrainServicesImpl = dependencies.ensureBrainServices || ensureBrainServices;
 
   const localLease = await loadLeaseImpl(leaseFile);
-  let peerReachable = false;
+  let peerProbe = peerProbeResult(false, false, "本轮未执行对端探活");
   let missingPeerIpWarningLogged = state.missingPeerIpWarningLogged === true;
   const hasPeer = selfId === "mac" || Boolean(peerConnection);
   if (hasPeer) {
     try {
-      peerReachable = await probePeer(selfId, peerConnection, {
-        ...dependencies,
-        env,
-        onMissingPeerIp: () => {
-          if (missingPeerIpWarningLogged) return;
-          logMessage(logger, "WARN", "PEER_TAILSCALE_IP 未配置，Windows 按不可达处理");
-          missingPeerIpWarningLogged = true;
-        }
-      });
+      peerProbe = await probePeer(selfId, peerConnection, { ...dependencies, env });
     } catch (error) {
-      logMessage(logger, "WARN", `对端探活失败，按不可达处理：${error.message || String(error)}`);
+      peerProbe = peerProbeResult(false, false, `对端探活抛出异常：${error.message || String(error)}`);
+    }
+    if (!peerProbe.determined) {
+      logMessage(logger, "WARN", `对端探活无法判断，本轮不更新不可达计数：${peerProbe.detail}`);
+      if (peerProbe.detail.includes("PEER_TAILSCALE_IP")) missingPeerIpWarningLogged = true;
     }
   }
+  const peerReachable = peerProbe.reachable;
 
   let peerLease = null;
   if (selfId === "windows" && peerConnection && peerReachable) {
@@ -304,9 +362,11 @@ export async function runSupervisorRound(state = {}, dependencies = {}) {
     : 0;
   const unreachableStreak = !hasPeer
     ? minUnreachableStreak
-    : peerReachable
-      ? 0
-      : previousStreak + 1;
+    : !peerProbe.determined
+      ? previousStreak
+      : peerReachable
+        ? 0
+        : previousStreak + 1;
 
   // 单节点没有可争用租约的对端；遗留的对端租约不能让唯一节点永久待机。
   const effectiveLease = !hasPeer && newest.lease?.holder !== selfId

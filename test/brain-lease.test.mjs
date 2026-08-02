@@ -237,40 +237,145 @@ test("ensureBrainServices starts and stops the Mac bridge idempotently from its 
   await assert.rejects(fs.access(path.join(repoRoot, "data", "state", "bridge.pid")));
 });
 
-test("windowsPeerReachable treats tailscale exit 0 as reachable and every failure as unreachable", () => {
+test("windowsPeerReachable accepts a DERP pong even when tailscale exits 1", () => {
   const calls = [];
   const spawnSync = (command, args, options) => {
     calls.push({ command, args, options });
-    return { status: calls.length === 1 ? 0 : 1, stdout: "", stderr: "" };
+    // 真机抓到的回归样本：对端经 DERP 回了 pong，但因未建立直连，tailscale 退出码为 1。
+    return {
+      status: 1,
+      stdout: "pong from desktop-j6atmrb (100.68.6.52) via DERP(syd) in 32ms\n",
+      stderr: "2026/08/02 14:38:18 direct connection not established\n"
+    };
   };
   const dependencies = {
-    env: { PEER_TAILSCALE_IP: "100.64.0.20" },
+    env: { PEER_TAILSCALE_IP: "100.68.6.52" },
+    fs: { existsSync: (file) => file === "/usr/local/bin/tailscale" },
     spawnSync
   };
 
-  assert.equal(windowsPeerReachable(dependencies), true);
-  assert.equal(windowsPeerReachable(dependencies), false);
-  assert.equal(windowsPeerReachable({
-    ...dependencies,
-    spawnSync: () => { throw new Error("tailscale missing"); }
-  }), false);
+  const result = windowsPeerReachable(dependencies);
+  assert.deepEqual(
+    { reachable: result.reachable, determined: result.determined },
+    { reachable: true, determined: true }
+  );
+  assert.match(result.detail, /pong from desktop-j6atmrb/i);
   assert.equal(calls[0].command, "/usr/local/bin/tailscale");
-  assert.deepEqual(calls[0].args, ["ping", "--c=1", "--timeout=5s", "100.64.0.20"]);
+  assert.deepEqual(calls[0].args, ["ping", "--c=1", "--timeout=5s", "100.68.6.52"]);
   assert.equal(calls[0].options.shell, false);
 });
 
-test("windowsPeerReachable skips tailscale when PEER_TAILSCALE_IP is missing", () => {
+test("windowsPeerReachable distinguishes no pong from a spawn failure", () => {
+  const dependencies = {
+    env: { PEER_TAILSCALE_IP: "100.64.0.20" },
+    fs: { existsSync: () => true }
+  };
+
+  const noPong = windowsPeerReachable({
+    ...dependencies,
+    spawnSync: () => ({ status: 0, stdout: "", stderr: "" })
+  });
+  assert.deepEqual(
+    { reachable: noPong.reachable, determined: noPong.determined },
+    { reachable: false, determined: true }
+  );
+
+  const spawnError = Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" });
+  const failed = windowsPeerReachable({
+    ...dependencies,
+    spawnSync: () => ({ status: null, stdout: "", stderr: "", error: spawnError })
+  });
+  assert.deepEqual(
+    { reachable: failed.reachable, determined: failed.determined },
+    { reachable: false, determined: false }
+  );
+  assert.match(failed.detail, /ENOENT/);
+});
+
+test("windowsPeerReachable skips probing when peer IP or tailscale is unavailable", () => {
   let spawnCalls = 0;
   let warnings = 0;
-  const reachable = windowsPeerReachable({
+  const missingPeer = windowsPeerReachable({
     env: {},
     spawnSync: () => { spawnCalls += 1; },
     onMissingPeerIp: () => { warnings += 1; }
   });
 
-  assert.equal(reachable, false);
+  assert.deepEqual(
+    { reachable: missingPeer.reachable, determined: missingPeer.determined },
+    { reachable: false, determined: false }
+  );
+  assert.match(missingPeer.detail, /PEER_TAILSCALE_IP/);
   assert.equal(spawnCalls, 0);
   assert.equal(warnings, 1);
+
+  const missingBin = windowsPeerReachable({
+    env: { PEER_TAILSCALE_IP: "100.64.0.20" },
+    fs: { existsSync: () => false },
+    spawnSync: () => { spawnCalls += 1; }
+  });
+  assert.deepEqual(
+    { reachable: missingBin.reachable, determined: missingBin.determined },
+    { reachable: false, determined: false }
+  );
+  assert.match(missingBin.detail, /tailscale/i);
+  assert.equal(spawnCalls, 0);
+});
+
+test("windowsPeerReachable resolves tailscale paths in priority order", () => {
+  const checked = [];
+  const calls = [];
+  const appBin = "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
+  const result = windowsPeerReachable({
+    env: {
+      PEER_TAILSCALE_IP: "100.64.0.20",
+      TAILSCALE_BIN: "/custom/missing-tailscale"
+    },
+    fs: {
+      existsSync(file) {
+        checked.push(file);
+        return file === appBin;
+      }
+    },
+    spawnSync(command) {
+      calls.push(command);
+      return { status: 0, stdout: "pong FROM windows (100.64.0.20) in 10ms\n", stderr: "" };
+    }
+  });
+
+  assert.deepEqual(checked, [
+    "/custom/missing-tailscale",
+    "/usr/local/bin/tailscale",
+    appBin
+  ]);
+  assert.deepEqual(calls, [appBin]);
+  assert.equal(result.reachable, true);
+  assert.equal(result.determined, true);
+});
+
+test("supervisor preserves unreachable streak when peer reachability is undetermined", async () => {
+  const logs = [];
+  const expiredWindowsLease = lease({
+    holder: "windows",
+    heartbeatAt: new Date(NOW - 90001).toISOString()
+  });
+  const dependencies = {
+    selfId: "mac",
+    env: {},
+    now: () => NOW,
+    loadLease: async () => expiredWindowsLease,
+    ensureBrainServices: async () => {},
+    log: (line) => { logs.push(line); }
+  };
+
+  const fromZero = await runSupervisorRound({ unreachableStreak: 0 }, dependencies);
+  const fromTwo = await runSupervisorRound({ unreachableStreak: 2 }, dependencies);
+
+  assert.equal(fromZero.unreachableStreak, 0);
+  assert.equal(fromTwo.unreachableStreak, 2);
+  assert.equal(fromZero.action, "standby");
+  assert.equal(fromTwo.action, "standby");
+  assert.equal(logs.filter((line) => /WARN.*PEER_TAILSCALE_IP/.test(line)).length, 2);
 });
 
 test("supervisor syncs only in the Windows role direction and ignores sync failures", async () => {
@@ -406,7 +511,7 @@ test("claim and renew push normally without pulling the remote soul", async () =
   assert.deepEqual(calls, ["service:true", "save", "push"]);
 });
 
-test("Mac supervisor never initiates soul sync and warns once when peer IP is missing", async () => {
+test("Mac supervisor never initiates soul sync and logs each undetermined peer probe", async () => {
   const calls = [];
   const logs = [];
   const macLease = lease({ holder: "mac" });
@@ -428,5 +533,5 @@ test("Mac supervisor never initiates soul sync and warns once when peer IP is mi
   await runSupervisorRound(first, dependencies);
 
   assert.deepEqual(calls, ["service:true", "service:true"]);
-  assert.equal(logs.filter((line) => line.includes("PEER_TAILSCALE_IP 未配置")).length, 1);
+  assert.equal(logs.filter((line) => line.includes("PEER_TAILSCALE_IP 未配置")).length, 2);
 });
