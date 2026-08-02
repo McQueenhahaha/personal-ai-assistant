@@ -24,8 +24,14 @@
 
 ## 改动（交 Codex）
 
-1. **删除上一草案的死代码**：`src/brain/claude.mjs`、`test/brain-claude.test.mjs`
-   （claude headless 方案已弃用）。
+1. ~~**删除上一草案的死代码**：`src/brain/claude.mjs`、`test/brain-claude.test.mjs`
+   （claude headless 方案已弃用）。~~
+
+   > **⛔ 这条已作废，不要执行（2026-08-02 总工更正）**
+   > 后续决策把 claude headless 又捡了回来：`src/brain/claude.mjs` 现在是
+   > **chat / screen / canvas / browse 四条能力的核心实现**，
+   > 被 `src/codex-auto-worker.mjs:6` import。
+   > 按这条指令清理死代码会直接打断生产。保留原文仅作历史记录。
 2. **桥 `src/openclaw-telegram-bridge.mjs`**：owner 发来的**非命令、非空**文本，
    入 codex 队列（`createTask`，`taskType:"telegram-chat"`，answer 导向），并回执
    "🤔 收到，正在思考，稍等…"。命令路径不变。

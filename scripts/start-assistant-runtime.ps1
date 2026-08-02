@@ -22,11 +22,17 @@ try {
   $_ | Out-File -FilePath (Join-Path $LogDir "start-local-queue-loop.err.log") -Append
 }
 
-try {
-  & "$PSScriptRoot\start-openclaw-gateway-hidden.ps1" *> (Join-Path $LogDir "start-openclaw.log")
-} catch {
-  $_ | Out-File -FilePath (Join-Path $LogDir "start-openclaw.err.log") -Append
-}
+# OpenClaw gateway 已退休（2026-08-02）。不要恢复这段启动。
+# 原因：gateway 的 .openclaw/openclaw.json 里 channels.telegram 用的是与 .env
+# 完全相同的 bot token。Telegram getUpdates 是单消费者语义 —— gateway 与
+# src/openclaw-telegram-bridge.mjs 同时轮询时，消息会被随机一方吞掉且不留痕迹
+# （表现为"发了命令助手不回"）。两者还会互相覆盖 setMyCommands 的命令菜单。
+# 桥现在以 TELEGRAM_DIRECT_MODE=true 直连，不需要 gateway。
+# try {
+#   & "$PSScriptRoot\start-openclaw-gateway-hidden.ps1" *> (Join-Path $LogDir "start-openclaw.log")
+# } catch {
+#   $_ | Out-File -FilePath (Join-Path $LogDir "start-openclaw.err.log") -Append
+# }
 
 try {
   & "$PSScriptRoot\start-openclaw-telegram-bridge-hidden.ps1" *> (Join-Path $LogDir "start-openclaw-telegram-bridge.log")
