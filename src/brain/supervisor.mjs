@@ -12,7 +12,7 @@ import {
 } from "./lease.mjs";
 import { pullSoul, pushSoul, readSoulLease } from "./soul-sync.mjs";
 import { macSatelliteHealth } from "../satellite/mac.mjs";
-import { loadEnv } from "../env.mjs";
+import { loadEnv, timestampForFile } from "../env.mjs";
 
 const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const LEASE_FILE = path.join(REPO_ROOT, "data", "state", "brain-lease.json");
@@ -343,6 +343,34 @@ export async function runSupervisorRound(state = {}, dependencies = {}) {
     };
   }
 
+  if (decision.action === "takeover" && selfId === "windows" && peerConnection) {
+    try {
+      await pullSoulImpl(peerConnection);
+    } catch (error) {
+      logMessage(
+        logger,
+        "WARN",
+        `接管前拉取 Mac 灵魂包失败，放弃本轮接管并转为待机：${error.message || String(error)}`
+      );
+      try {
+        await ensureBrainServicesImpl(false);
+      } catch (stopError) {
+        logMessage(logger, "ERROR", `放弃接管后停止大脑桥失败：${stopError.message || String(stopError)}`);
+      }
+      return {
+        ...decision,
+        role: "satellite",
+        action: "standby",
+        reason: "takeover-soul-pull-failed",
+        selfId,
+        peerReachable,
+        unreachableStreak,
+        missingPeerIpWarningLogged,
+        lease: newest.lease
+      };
+    }
+  }
+
   await ensureBrainServicesImpl(true);
   const leaseReason = decision.action === "renew"
     ? "renew"
@@ -366,7 +394,9 @@ export async function runSupervisorRound(state = {}, dependencies = {}) {
 
   if (selfId === "windows" && peerConnection) {
     try {
-      await pushSoulImpl(peerConnection);
+      await pushSoulImpl(peerConnection, {
+        backupTimestamp: timestampForFile(new Date(nowMs))
+      });
     } catch (error) {
       logMessage(logger, "WARN", `推送灵魂包失败，本轮租约仍保留：${error.message || String(error)}`);
     }

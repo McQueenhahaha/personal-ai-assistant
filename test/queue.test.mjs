@@ -178,6 +178,43 @@ test("writeFailure moves the task to failed and writes an error file with stack 
   assert.equal(fs.existsSync(path.join(dirs.failed, "task.txt")), true);
 });
 
+test("writeResult still writes output when the source task no longer exists", (t) => {
+  const { inbox } = makeInbox(t);
+  const dirs = ensureQueue(inbox);
+  const taskFile = path.join(dirs.processing, "missing.txt");
+
+  const outFile = writeResult({
+    inboxPath: inbox,
+    taskFile,
+    task: {
+      id: "missing-result",
+      title: "Missing result source",
+      source: "unit",
+      priority: "normal"
+    },
+    result: "preserved result"
+  });
+
+  assert.match(fs.readFileSync(outFile, "utf8"), /preserved result/);
+  assert.equal(fs.existsSync(path.join(dirs.done, "missing.txt")), false);
+});
+
+test("writeFailure still writes output when the source task no longer exists", (t) => {
+  const { inbox } = makeInbox(t);
+  const dirs = ensureQueue(inbox);
+  const taskFile = path.join(dirs.processing, "missing.txt");
+
+  const outFile = writeFailure({
+    inboxPath: inbox,
+    taskFile,
+    task: { title: "Missing failure source" },
+    error: new Error("source already moved")
+  });
+
+  assert.match(fs.readFileSync(outFile, "utf8"), /source already moved/);
+  assert.equal(fs.existsSync(path.join(dirs.failed, "missing.txt")), false);
+});
+
 test("createTask sanitizes long titles and writes JSON that readTask can read", (t) => {
   const { inbox } = makeInbox(t);
   const title = `Needs review: ${"x".repeat(100)} / final`;

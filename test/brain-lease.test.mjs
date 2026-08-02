@@ -314,6 +314,98 @@ test("supervisor syncs only in the Windows role direction and ignores sync failu
   assert.match(logs.join("\n"), /拉取 Mac 灵魂包失败/);
 });
 
+test("takeover pulls the remote soul before starting services, saving the lease, and pushing", async () => {
+  const peerConnection = { host: "tester@mac", key: "C:\\keys\\pai_mac" };
+  const expiredMacLease = lease({ heartbeatAt: new Date(NOW - 90001).toISOString() });
+  const calls = [];
+
+  const result = await runSupervisorRound({}, {
+    selfId: "windows",
+    peerConnection,
+    now: () => NOW,
+    loadLease: async () => expiredMacLease,
+    macSatelliteHealth: async () => ({ online: true }),
+    readSoulLease: async () => expiredMacLease,
+    pullSoul: async () => { calls.push("pull"); return {}; },
+    ensureBrainServices: async (shouldRun) => { calls.push(`service:${shouldRun}`); },
+    saveLease: async () => { calls.push("save"); },
+    pushSoul: async (_connection, options) => {
+      calls.push(`push:${options.backupTimestamp}`);
+    },
+    log: () => {}
+  });
+
+  assert.equal(result.role, "brain");
+  assert.equal(result.action, "takeover");
+  assert.deepEqual(calls, [
+    "pull",
+    "service:true",
+    "save",
+    "push:2026-08-01T00-02-00-000Z"
+  ]);
+});
+
+test("takeover pull failure conservatively stays standby without saving or pushing", async () => {
+  const peerConnection = { host: "tester@mac", key: "C:\\keys\\pai_mac" };
+  const expiredMacLease = lease({ heartbeatAt: new Date(NOW - 90001).toISOString() });
+  const calls = [];
+  const logs = [];
+
+  const result = await runSupervisorRound({}, {
+    selfId: "windows",
+    peerConnection,
+    now: () => NOW,
+    loadLease: async () => expiredMacLease,
+    macSatelliteHealth: async () => ({ online: true }),
+    readSoulLease: async () => expiredMacLease,
+    pullSoul: async () => { calls.push("pull"); throw new Error("scp unavailable"); },
+    ensureBrainServices: async (shouldRun) => { calls.push(`service:${shouldRun}`); },
+    saveLease: async () => { calls.push("save"); },
+    pushSoul: async () => { calls.push("push"); },
+    log: (line) => { logs.push(line); }
+  });
+
+  assert.equal(result.role, "satellite");
+  assert.equal(result.action, "standby");
+  assert.equal(result.reason, "takeover-soul-pull-failed");
+  assert.deepEqual(calls, ["pull", "service:false"]);
+  assert.match(logs.join("\n"), /放弃本轮接管并转为待机/);
+  assert.match(logs.join("\n"), /scp unavailable/);
+});
+
+test("claim and renew push normally without pulling the remote soul", async () => {
+  const peerConnection = { host: "tester@mac", key: "C:\\keys\\pai_mac" };
+  const calls = [];
+  const common = {
+    selfId: "windows",
+    peerConnection,
+    now: () => NOW,
+    macSatelliteHealth: async () => ({ online: true }),
+    pullSoul: async () => { calls.push("pull"); },
+    ensureBrainServices: async (shouldRun) => { calls.push(`service:${shouldRun}`); },
+    saveLease: async () => { calls.push("save"); },
+    pushSoul: async () => { calls.push("push"); },
+    log: () => {}
+  };
+
+  const claimed = await runSupervisorRound({}, {
+    ...common,
+    loadLease: async () => null,
+    readSoulLease: async () => null
+  });
+  assert.equal(claimed.action, "claim");
+  assert.deepEqual(calls, ["service:true", "save", "push"]);
+
+  calls.length = 0;
+  const renewed = await runSupervisorRound({}, {
+    ...common,
+    loadLease: async () => lease({ holder: "windows" }),
+    readSoulLease: async () => null
+  });
+  assert.equal(renewed.action, "renew");
+  assert.deepEqual(calls, ["service:true", "save", "push"]);
+});
+
 test("Mac supervisor never initiates soul sync and warns once when peer IP is missing", async () => {
   const calls = [];
   const logs = [];

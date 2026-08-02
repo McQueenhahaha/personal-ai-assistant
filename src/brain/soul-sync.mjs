@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const REMOTE_SOUL_DIR = "~/pai-brain/data/state/";
+const REMOTE_SOUL_BACKUP_DIR = "~/pai-brain/data/state-backup";
 const SCP_TIMEOUT_MS = 30000;
 
 export const SOUL_FILES = Object.freeze([
@@ -92,13 +93,35 @@ export async function pushSoul({ host, key }, dependencies = {}) {
 
   if (!localFiles.length) return { pushed: [] };
 
+  const backupTimestamp = String(dependencies.backupTimestamp || "").trim();
+  if (!backupTimestamp || !/^[a-z0-9._-]+$/i.test(backupTimestamp)) {
+    throw new Error("推送灵魂包需要文件名安全的远端备份时间戳");
+  }
+  const backupPath = `${REMOTE_SOUL_BACKUP_DIR}/${backupTimestamp}/`;
+  const backupCommand = [
+    "set -e",
+    `backup_dir=\"$HOME/pai-brain/data/state-backup/${backupTimestamp}\"`,
+    "state_dir=\"$HOME/pai-brain/data/state\"",
+    "mkdir -p \"$backup_dir\"",
+    "if [ -d \"$state_dir\" ]; then for file in \"$state_dir\"/*; do [ -f \"$file\" ] || continue; cp -p \"$file\" \"$backup_dir/\"; done; fi"
+  ].join("; ");
+  const backupResult = runSsh(spawnSyncImpl, [
+    ...scpBaseArgs(connection.key),
+    connection.host,
+    backupCommand
+  ]);
+  assertSuccess(backupResult, "备份远端灵魂包失败");
+
   const result = runScp(spawnSyncImpl, [
     ...scpBaseArgs(connection.key),
     ...localFiles,
     `${connection.host}:${REMOTE_SOUL_DIR}`
   ]);
   assertSuccess(result, "推送灵魂包失败");
-  return { pushed: localFiles.map((file) => path.basename(file)) };
+  return {
+    pushed: localFiles.map((file) => path.basename(file)),
+    backupPath
+  };
 }
 
 function backupLocalSoul(fsImpl, repoRoot) {

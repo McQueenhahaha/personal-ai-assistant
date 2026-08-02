@@ -15,6 +15,7 @@ const CONNECTION = {
   host: "tester@100.64.0.10",
   key: "C:\\keys\\pai_mac"
 };
+const BACKUP_TIMESTAMP = "2026-08-01T00-02-00-000Z";
 
 async function tempRepo(t) {
   const directory = await fsPromises.mkdtemp(path.join(os.tmpdir(), "brain-soul-sync-"));
@@ -22,7 +23,7 @@ async function tempRepo(t) {
   return directory;
 }
 
-test("pushSoul builds one injection-safe scp call from existing soul files only", async (t) => {
+test("pushSoul backs up the remote state before its injection-safe scp call", async (t) => {
   const repoRoot = await tempRepo(t);
   const present = [SOUL_FILES[0], SOUL_FILES.at(-1)];
   for (const relativeFile of present) {
@@ -33,6 +34,7 @@ test("pushSoul builds one injection-safe scp call from existing soul files only"
 
   const calls = [];
   const result = await pushSoul(CONNECTION, {
+    backupTimestamp: BACKUP_TIMESTAMP,
     repoRoot,
     spawnSync: (command, args, options) => {
       calls.push({ command, args, options });
@@ -44,10 +46,15 @@ test("pushSoul builds one injection-safe scp call from existing soul files only"
     "openclaw-telegram-bridge-state.json",
     "brain-lease.json"
   ]);
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].command, "scp");
+  assert.equal(result.backupPath, `~/pai-brain/data/state-backup/${BACKUP_TIMESTAMP}/`);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].command, "ssh");
   assert.equal(calls[0].options.shell, false);
-  assert.deepEqual(calls[0].args.slice(0, 6), [
+  assert.equal(calls[0].args.at(-2), CONNECTION.host);
+  assert.match(calls[0].args.at(-1), new RegExp(`state-backup/${BACKUP_TIMESTAMP}`));
+  assert.equal(calls[1].command, "scp");
+  assert.equal(calls[1].options.shell, false);
+  assert.deepEqual(calls[1].args.slice(0, 6), [
     "-i",
     CONNECTION.key,
     "-o",
@@ -55,8 +62,8 @@ test("pushSoul builds one injection-safe scp call from existing soul files only"
     "-o",
     "StrictHostKeyChecking=accept-new"
   ]);
-  assert.deepEqual(calls[0].args.slice(6, -1), present.map((file) => path.join(repoRoot, file)));
-  assert.equal(calls[0].args.at(-1), `${CONNECTION.host}:~/pai-brain/data/state/`);
+  assert.deepEqual(calls[1].args.slice(6, -1), present.map((file) => path.join(repoRoot, file)));
+  assert.equal(calls[1].args.at(-1), `${CONNECTION.host}:~/pai-brain/data/state/`);
 });
 
 test("pushSoul skips missing files and does not spawn scp when none exist", async (t) => {
@@ -163,11 +170,20 @@ test("pushSoul and pullSoul surface clear scp failures", async (t) => {
     stdout: "",
     stderr: "connection refused"
   });
+  const pushCommands = [];
 
   await assert.rejects(
-    pushSoul(CONNECTION, { repoRoot, spawnSync: fail }),
-    /推送灵魂包失败：connection refused/
+    pushSoul(CONNECTION, {
+      backupTimestamp: BACKUP_TIMESTAMP,
+      repoRoot,
+      spawnSync: (command) => {
+        pushCommands.push(command);
+        return fail();
+      }
+    }),
+    /备份远端灵魂包失败：connection refused/
   );
+  assert.deepEqual(pushCommands, ["ssh"]);
   await assert.rejects(
     pullSoul(CONNECTION, { repoRoot, spawnSync: fail }),
     /拉取灵魂包失败：connection refused/

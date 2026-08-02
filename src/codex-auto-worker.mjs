@@ -478,6 +478,33 @@ function buildProgressMessage({ task, elapsedSeconds, jsonLogFile }) {
   return lines.join("\n");
 }
 
+function recordNotificationFailure({ task, outFile, failure, appendAuditImpl, logError }) {
+  const taskId = redactSensitive(oneLine(task?.id || "unknown"));
+  const reason = redactSensitive(oneLine(failure.error?.message || String(failure.error)));
+  const resultFile = path.resolve(outFile);
+  const details = `taskId=${taskId}; phase=${failure.phase}; reason=${reason}; resultFile=${resultFile}`;
+
+  try {
+    appendAuditImpl({
+      kind: "telegram-notification",
+      reason: details,
+      result: "failed"
+    });
+  } catch (error) {
+    try {
+      logError(`[codex-auto-worker] 通知失败审计写入失败：${error.message || String(error)}`);
+    } catch {
+      // Notification diagnostics must not fail the completed task.
+    }
+  }
+
+  try {
+    logError(`[codex-auto-worker] Telegram 通知失败：${details}`);
+  } catch {
+    // Notification diagnostics must not fail the completed task.
+  }
+}
+
 function runCodexExec({ root, prompt, taskStem, onProgress }) {
   const entrypoint = codexEntrypoint(root);
   if (!fs.existsSync(entrypoint)) {
@@ -571,13 +598,18 @@ function runCodexExec({ root, prompt, taskStem, onProgress }) {
 
 export async function processCodexAutoQueue({
   notify = true,
+  appendAudit: appendAuditImpl = appendAudit,
   dispatchToMac: dispatchMac = dispatchToMac,
   pickNode: selectNode = pickNode,
   nodeProbe,
   runClaudeChat: runChat = runClaudeChat,
+  runClaudeText: runText = runClaudeText,
   runCanvasChat: runCanvas = runCanvasChat,
   runScreenChat: runScreen = runScreenChat,
-  runCodexExec: runCodex = runCodexExec
+  runCodexExec: runCodex = runCodexExec,
+  sendTelegramDocument: sendDocument = sendTelegramDocument,
+  sendTelegramMessage: sendMessage = sendTelegramMessage,
+  logError = console.error
 } = {}) {
   loadEnv();
 
@@ -613,6 +645,16 @@ export async function processCodexAutoQueue({
     for (const item of pending) {
       const claimed = claimTask(item, inboxPath);
       let task;
+      const notificationFailures = [];
+      let completionNotificationFailed = false;
+      const tryNotify = async (phase, action, { completion = false } = {}) => {
+        try {
+          await action();
+        } catch (error) {
+          notificationFailures.push({ phase, error });
+          if (completion) completionNotificationFailed = true;
+        }
+      };
       try {
         task = readTask(claimed);
         const routedPrompt = routingPrompt(task.prompt);
@@ -642,7 +684,9 @@ export async function processCodexAutoQueue({
           !isStudy &&
           !(isApprovedPrivileged && classification?.tier === TIER.FORBIDDEN)
         ) {
-          await sendTelegramMessage(`Codex 任务已开始：${task.title}\n状态：已领取到 processing，正在启动 Codex。`);
+          await tryNotify("task-start", () => sendMessage(
+            `Codex 任务已开始：${task.title}\n状态：已领取到 processing，正在启动 Codex。`
+          ));
         }
         const notifyStatusUpdates = boolEnv("CODEX_AUTO_STATUS_UPDATES", true);
         const taskStem = path.basename(claimed).replace(/\.[^.]+$/, "");
@@ -687,7 +731,7 @@ export async function processCodexAutoQueue({
             ].join("\n")
           };
         } else if (isStudy) {
-          execution = { result: await runClaudeText(buildPrompt(task, root), { timeoutMs: 600000 }) };
+          execution = { result: await runText(buildPrompt(task, root), { timeoutMs: 600000 }) };
         } else {
           const nodeCapability = nodeCapabilityFor(executionTask, capability);
           const selection = routedPrompt.forcedNodeId
@@ -763,7 +807,9 @@ export async function processCodexAutoQueue({
               taskStem,
               onProgress: async ({ elapsedSeconds, jsonLogFile }) => {
                 if (notify && notifyStatusUpdates && !isChat && !isStudy) {
-                  await sendTelegramMessage(buildProgressMessage({ task, elapsedSeconds, jsonLogFile }));
+                  await tryNotify("task-progress", () => sendMessage(
+                    buildProgressMessage({ task, elapsedSeconds, jsonLogFile })
+                  ));
                 }
               }
             });
@@ -780,31 +826,73 @@ export async function processCodexAutoQueue({
           }
         }
         const outFile = writeResult({ inboxPath, taskFile: claimed, task, result: execution.result });
-        results.push({ ok: true, task, outFile, log: execution.jsonLogFile });
         if (notify && isStudy) {
           const studyDir = path.join(root, "data", "study");
           fs.mkdirSync(studyDir, { recursive: true });
           const studyFile = path.join(studyDir, `study-${timestampForFile()}.md`);
           fs.writeFileSync(studyFile, execution.result, "utf8");
           for (let offset = 0; offset < execution.result.length; offset += 3500) {
-            await sendTelegramMessage(execution.result.slice(offset, offset + 3500));
+            const chunkNumber = Math.floor(offset / 3500) + 1;
+            await tryNotify(
+              `study-chunk-${chunkNumber}`,
+              () => sendMessage(execution.result.slice(offset, offset + 3500)),
+              { completion: true }
+            );
           }
-          await sendTelegramDocument(studyFile, `📚 学习文档：${task.title}`);
+          await tryNotify(
+            "study-document",
+            () => sendDocument(studyFile, `📚 学习文档：${task.title}`),
+            { completion: true }
+          );
         } else if (notify && isChat) {
-          await sendTelegramMessage(execution.notification || execution.result);
+          await tryNotify(
+            "chat-result",
+            () => sendMessage(execution.notification || execution.result),
+            { completion: true }
+          );
         } else if (notify) {
-          await sendTelegramMessage(`Codex 自动任务完成：${task.title}\n\n${execution.result}`);
+          await tryNotify(
+            "task-result",
+            () => sendMessage(`Codex 自动任务完成：${task.title}\n\n${execution.result}`),
+            { completion: true }
+          );
         }
+        if (completionNotificationFailed) {
+          await tryNotify("result-recovery", () => sendMessage(
+            `结果已生成但推送失败，文件在 ${outFile}`
+          ));
+        }
+        for (const failure of notificationFailures) {
+          recordNotificationFailure({
+            task,
+            outFile,
+            failure,
+            appendAuditImpl,
+            logError
+          });
+        }
+        results.push({ ok: true, task, outFile, log: execution.jsonLogFile });
       } catch (error) {
         const outFile = writeFailure({ inboxPath, taskFile: claimed, task, error });
-        results.push({ ok: false, task, outFile, error });
         if (notify && task?.taskType === "study-distill") {
-          await sendTelegramMessage(`蒸馏失败：${error.message || String(error)}`);
+          await tryNotify("study-failure", () => sendMessage(`蒸馏失败：${error.message || String(error)}`));
         } else if (notify && task?.taskType === "telegram-chat") {
-          await sendTelegramMessage(`回答失败：${error.message || String(error)}`);
+          await tryNotify("chat-failure", () => sendMessage(`回答失败：${error.message || String(error)}`));
         } else if (notify) {
-          await sendTelegramMessage(`Codex 自动任务失败：${task?.title || item.name}\n\n${error.message || String(error)}`);
+          await tryNotify("task-failure", () => sendMessage(
+            `Codex 自动任务失败：${task?.title || item.name}\n\n${error.message || String(error)}`
+          ));
         }
+        for (const failure of notificationFailures) {
+          recordNotificationFailure({
+            task,
+            outFile,
+            failure,
+            appendAuditImpl,
+            logError
+          });
+        }
+        results.push({ ok: false, task, outFile, error });
       }
     }
   } finally {

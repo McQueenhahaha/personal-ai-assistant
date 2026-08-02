@@ -93,7 +93,7 @@ export function writeResult({ inboxPath, taskFile, task, result, status = "done"
   ].join("\n");
 
   fs.writeFileSync(outFile, `${header}${result.trim()}\n`, "utf8");
-  fs.renameSync(taskFile, doneFile);
+  if (fs.existsSync(taskFile)) fs.renameSync(taskFile, doneFile);
   return outFile;
 }
 
@@ -113,7 +113,7 @@ export function writeFailure({ inboxPath, taskFile, task, error }) {
     ].join("\n"),
     "utf8"
   );
-  fs.renameSync(taskFile, failedFile);
+  if (fs.existsSync(taskFile)) fs.renameSync(taskFile, failedFile);
   return outFile;
 }
 
