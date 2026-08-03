@@ -15,12 +15,20 @@
       satellite\windows-agent.ps1 —— 对端拿不到 shell
    5. 收紧 windows-agent.ps1 的 ACL，普通用户不可写
       —— 否则用户态代码能改写它，forced-command 就形同虚设
+
+  三个参数都必填，**刻意不给默认值**：默认值会把作者本人的公钥和地址
+  带进任何人的机器（这是公开仓库），等于替别人授权了一把不属于他的钥匙。
+
+  怎么取值：
+    -PeerPublicKey   对端执行 `cat ~/.ssh/pai_windows.pub`
+    -PeerAddress     对端执行 `tailscale ip -4`
+    -ListenAddress   本机执行 `tailscale ip -4`
 #>
 
 param(
-  [string]$PeerPublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHIv6wx/Il9gtwMl5u/zabJsCrvaw63WpcMmKWsHsImH pai-mac-to-windows",
-  [string]$PeerAddress   = "100.66.80.98",
-  [string]$ListenAddress = "100.68.6.52"
+  [Parameter(Mandatory)][string]$PeerPublicKey,
+  [Parameter(Mandatory)][string]$PeerAddress,
+  [Parameter(Mandatory)][string]$ListenAddress
 )
 
 $ErrorActionPreference = "Stop"

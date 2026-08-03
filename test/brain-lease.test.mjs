@@ -244,12 +244,12 @@ test("windowsPeerReachable accepts a DERP pong even when tailscale exits 1", () 
     // 真机抓到的回归样本：对端经 DERP 回了 pong，但因未建立直连，tailscale 退出码为 1。
     return {
       status: 1,
-      stdout: "pong from desktop-j6atmrb (100.68.6.52) via DERP(syd) in 32ms\n",
+      stdout: "pong from windows-node (100.64.0.20) via DERP(syd) in 32ms\n",
       stderr: "2026/08/02 14:38:18 direct connection not established\n"
     };
   };
   const dependencies = {
-    env: { PEER_TAILSCALE_IP: "100.68.6.52" },
+    env: { PEER_TAILSCALE_IP: "100.64.0.20" },
     fs: { existsSync: (file) => file === "/usr/local/bin/tailscale" },
     spawnSync
   };
@@ -259,9 +259,9 @@ test("windowsPeerReachable accepts a DERP pong even when tailscale exits 1", () 
     { reachable: result.reachable, determined: result.determined },
     { reachable: true, determined: true }
   );
-  assert.match(result.detail, /pong from desktop-j6atmrb/i);
+  assert.match(result.detail, /pong from windows-node/i);
   assert.equal(calls[0].command, "/usr/local/bin/tailscale");
-  assert.deepEqual(calls[0].args, ["ping", "--c=1", "--timeout=5s", "100.68.6.52"]);
+  assert.deepEqual(calls[0].args, ["ping", "--c=1", "--timeout=5s", "100.64.0.20"]);
   assert.equal(calls[0].options.shell, false);
 });
 

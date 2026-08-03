@@ -54,7 +54,7 @@ test("local release happens even when the push cannot go out", async () => {
     root: "/tmp/whatever",
     selfId: "windows",
     nowMs: NOW,
-    env: { MAC_SATELLITE_HOST: "ou@example", MAC_SATELLITE_KEY: "/tmp/key" },
+    env: { MAC_SATELLITE_HOST: "user@example", MAC_SATELLITE_KEY: "/tmp/key" },
     fs: {
       readFileSync: () => JSON.stringify(LEASE),
       writeFileSync: (file, body) => writes.push({ file, body })
