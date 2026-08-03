@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { projectRoot } from "../env.mjs";
+import { loadEnv, projectRoot } from "../env.mjs";
 import { resolveNodeId } from "../brain/supervisor.mjs";
 
 /**
@@ -62,6 +62,10 @@ export function readLease(root = projectRoot(), fsImpl = fs) {
  *   shell       node src/state/brain-guard.mjs || exit 0
  */
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  // 必须先 loadEnv：resolveNodeId 依赖 BRAIN_NODE_ID，不加载 .env 会认错自己是哪台机器，
+  // 从而把"该跑"判成"该跳过"（或反过来）。本仓 supervisor 曾因漏调它导致所有 .env
+  // 配置不可见 —— 纯函数测试全绿但程序跑不起来，测试 guarded entrypoints 就是为此而立。
+  loadEnv();
   const root = projectRoot();
   const decision = decideScheduledWork({
     lease: readLease(root),
