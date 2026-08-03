@@ -4,6 +4,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { loadEnv, projectRoot, resolveFromCwd, timestampForFile } from "./env.mjs";
 import { runClaudeChat, runClaudeText, SCREEN_SYSTEM_PROMPT } from "./brain/claude.mjs";
+import { resolveNodeId } from "./brain/supervisor.mjs";
 import {
   findAssignments,
   getAssignmentDetail,
@@ -27,6 +28,7 @@ import {
 } from "./security/policy.mjs";
 import { redactSensitive } from "./security/redact.mjs";
 import { isPaused, isStopRequested } from "./state/pause.mjs";
+import { clearInFlight, describeInterrupted, readInFlight, writeInFlight } from "./state/in-flight.mjs";
 import {
   claimTask,
   decideOrphanAction,
@@ -833,6 +835,40 @@ export async function processCodexAutoQueue({
       logError(`[codex-auto-worker] 孤儿任务恢复扫描失败，继续处理正常队列：${error.message || String(error)}`);
     }
 
+    // 凤凰计划：上一台大脑若死在半路，这里把它正在做的事报给用户。
+    // 上面的孤儿扫描只看得见**本机** processing/ 里的文件；而队列不在灵魂包里，
+    // 死在另一台机器上的任务本机根本看不到 —— 只有这条跨机记录能说出
+    // "什么被中断了"。它把静默丢失变成可见事件，这正是它存在的全部理由。
+    // 注意：拿不回中间产物（codex 写了一半的代码是丢了），但用户至少知道发生过什么。
+    try {
+      const interrupted = describeInterrupted({
+        record: readInFlight(root),
+        selfId: resolveNodeId(),
+        nowMs: Date.now()
+      });
+      if (interrupted) {
+        appendAuditImpl({
+          kind: "brain-handover",
+          tier: TIER.SAFE,
+          reason: `interrupted-on-${interrupted.fromNode}`,
+          promptPreview: interrupted.taskId,
+          result: "reported"
+        });
+        if (notify) {
+          try {
+            await sendMessage(`${interrupted.text}\n\n它的中间结果无法恢复。需要的话请重新发一次。`);
+          } catch (notifyError) {
+            // 通知失败不阻断后续队列处理 —— 本仓既有原则：任务状态不由通知成败决定。
+            logError(`[codex-auto-worker] 中断上报通知失败：${notifyError.message || String(notifyError)}`);
+          }
+        }
+        // 报告过就清掉，否则每轮都会重复提醒。
+        clearInFlight(root);
+      }
+    } catch (error) {
+      logError(`[codex-auto-worker] 跨机中断任务上报失败：${error.message || String(error)}`);
+    }
+
     const pending = listPendingTasks(inboxPath).slice(0, maxTasks);
     for (const item of pending) {
       const claimed = claimTask(item, inboxPath);
@@ -849,6 +885,16 @@ export async function processCodexAutoQueue({
       };
       try {
         task = readTask(claimed);
+        // 记下"正在做什么"。该记录在灵魂包里，所以对端看得见 ——
+        // 本机若死在半路，接管方能据此告诉用户什么被中断了，
+        // 而不是让用户停在"任务已开始"之后再无下文。
+        writeInFlight({
+          taskId: task.id || path.basename(claimed),
+          title: task.title || "",
+          taskType: task.taskType || "",
+          nodeId: resolveNodeId(),
+          startedAt: new Date().toISOString()
+        }, root);
         const routedPrompt = routingPrompt(task.prompt);
         const executionTask = routedPrompt.prompt === task.prompt
           ? task
@@ -1109,6 +1155,15 @@ export async function processCodexAutoQueue({
           });
         }
         results.push({ ok: false, task, outFile, error });
+      } finally {
+        // 无论成败都要清 —— 留着会让接管方误报"有任务被中断"。
+        // 用内容置空而非删文件：该文件在灵魂包里，而同步只搬运存在的文件、
+        // 删除不传播，删了对端会永远以为还有任务在飞。
+        try {
+          clearInFlight(root);
+        } catch {
+          // 清理失败不能影响任务结果本身。
+        }
       }
     }
   } finally {

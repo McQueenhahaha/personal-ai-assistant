@@ -28,6 +28,10 @@ export const SOUL_FILES = Object.freeze([
   // 否则急停会静默失效。用"内容表示状态"而非"文件存在即暂停" —— 本同步
   // 只搬运存在的文件、删除不传播，靠删文件表示恢复的话对端会永远停着。
   "data/state/assistant-pause-state.json",
+  // 在飞任务：一台大脑死在半路时，接管方据此告诉用户"什么被中断了"。
+  // 不同步的话，任务文件躺在死者的 processing/ 里(队列本身不在灵魂包),
+  // 接管方完全不知道它存在过 —— 用户只会看到"任务已开始"然后永远没下文。
+  "data/state/in-flight.json",
   // 大脑租约：两端必须看到同一持有者、心跳与 TTL。
   "data/state/brain-lease.json"
 ]);
