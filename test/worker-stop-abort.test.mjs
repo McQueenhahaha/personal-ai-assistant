@@ -3,29 +3,69 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isStopRequested, killProcessTree } from "../src/codex-auto-worker.mjs";
+import { killProcessTree } from "../src/codex-auto-worker.mjs";
+import { isPaused, isStopRequested, readPauseState, writePauseState } from "../src/state/pause.mjs";
+import { SOUL_FILES } from "../src/brain/soul-sync.mjs";
 
 // 用户按下 /stop 后眼看着任务继续跑完(codex 最长 1800 秒)，因为此前急停只在
 // 每轮入口检查一次。这些测试守住"执行期间也能被中断"。
 
 function tempRoot(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "pai-stop-"));
-  fs.mkdirSync(path.join(root, "data", "state"), { recursive: true });
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   return root;
 }
 
-test("isStopRequested only reports true once the stop flag exists", (t) => {
+test("pause levels drive the two different behaviours", (t) => {
   const root = tempRoot(t);
+
+  assert.deepEqual(readPauseState(root), { level: "none", at: "" });
+  assert.equal(isPaused(root), false);
   assert.equal(isStopRequested(root), false);
-  fs.writeFileSync(path.join(root, "data", "state", "assistant-stop.flag"), "2026-08-03T09:00:00Z\n");
-  assert.equal(isStopRequested(root), true);
+
+  writePauseState("pause", root);
+  assert.equal(isPaused(root), true, "pause 要阻止领取新任务");
+  assert.equal(isStopRequested(root), false, "pause 不该打断正在跑的任务");
+
+  writePauseState("stop", root);
+  assert.equal(isPaused(root), true);
+  assert.equal(isStopRequested(root), true, "只有 stop 才中断正在跑的任务");
+
+  writePauseState("none", root);
+  assert.equal(isPaused(root), false, "/resume 必须同时解除 pause 与 stop");
+  assert.equal(isStopRequested(root), false);
 });
 
-test("isStopRequested reads the given root, not the developer machine state", (t) => {
+test("resume is expressed as content, never as a missing file", (t) => {
+  // 灵魂包只搬运存在的文件、删除不传播。若用"删文件"表示恢复，
+  // 大脑迁到另一台后对端仍留着旧标志 —— 助手会静默地又停下。
+  const root = tempRoot(t);
+  writePauseState("stop", root);
+  writePauseState("none", root);
+  const file = path.join(root, "data", "state", "assistant-pause-state.json");
+  assert.equal(fs.existsSync(file), true, "恢复后文件必须仍然存在");
+  assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).level, "none");
+});
+
+test("pause state travels with the brain", () => {
+  assert.ok(
+    SOUL_FILES.includes("data/state/assistant-pause-state.json"),
+    "急停不进灵魂包的话，大脑一迁移急停就静默失效"
+  );
+});
+
+test("unreadable pause state degrades to running, not to a silent halt", (t) => {
+  const root = tempRoot(t);
+  fs.mkdirSync(path.join(root, "data", "state"), { recursive: true });
+  fs.writeFileSync(path.join(root, "data", "state", "assistant-pause-state.json"), "{broken");
+  // 读不出状态就罢工是静默故障，用户无从察觉；继续运行至少是可观察的。
+  assert.equal(isPaused(root), false);
+});
+
+test("pause state reads the given root, not the developer machine", (t) => {
   // 本仓踩过这个坑：开发机上一个残留标志让 9 个无关测试失败。
   const root = tempRoot(t);
-  assert.equal(isStopRequested(root, () => false), false);
+  assert.equal(isPaused(root), false);
 });
 
 test("killProcessTree asks taskkill for the whole tree, never a bare child kill", () => {

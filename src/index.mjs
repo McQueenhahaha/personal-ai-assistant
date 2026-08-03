@@ -6,11 +6,12 @@ import { collectMailDrops } from "./mail-drop.mjs";
 import { envList, envNumber, loadEnv, resolveFromCwd, timestampForFile } from "./env.mjs";
 import { fetchGameNews } from "./rss.mjs";
 import { sendTelegramMessage } from "./telegram.mjs";
+import { isPaused } from "./state/pause.mjs";
 
 async function runDigest() {
   loadEnv();
-  if (fs.existsSync(resolveFromCwd("./data/state/assistant-paused.flag"))) {
-    console.log("[digest] 已暂停(assistant-paused.flag), 跳过本次。");
+  if (isPaused()) {
+    console.log("[digest] 已暂停, 跳过本次。");
     return;
   }
 

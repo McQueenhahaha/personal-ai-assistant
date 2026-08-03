@@ -24,6 +24,10 @@ export const SOUL_FILES = Object.freeze([
   "data/state/canvas-token-alert.json",
   // 学校检查去重：保留已处理邮件、作业与通知状态。
   "data/state/school-check-state.json",
+  // 暂停/急停状态：用户按下 /stop 后大脑迁到另一台，新机器必须同样停着，
+  // 否则急停会静默失效。用"内容表示状态"而非"文件存在即暂停" —— 本同步
+  // 只搬运存在的文件、删除不传播，靠删文件表示恢复的话对端会永远停着。
+  "data/state/assistant-pause-state.json",
   // 大脑租约：两端必须看到同一持有者、心跳与 TTL。
   "data/state/brain-lease.json"
 ]);

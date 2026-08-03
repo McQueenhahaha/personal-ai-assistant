@@ -26,6 +26,7 @@ import {
   TIER
 } from "./security/policy.mjs";
 import { redactSensitive } from "./security/redact.mjs";
+import { isPaused, isStopRequested } from "./state/pause.mjs";
 import {
   claimTask,
   decideOrphanAction,
@@ -96,16 +97,8 @@ export function isWorkerPidAlive(pid, spawnSyncImpl = spawnSync) {
   return !result?.error && result?.status === 0 && /codex-auto-worker\.mjs/i.test(String(result.stdout || ""));
 }
 
-export const STOP_FLAG_RELATIVE = "./data/state/assistant-stop.flag";
 // 急停检测间隔。进度回调默认 60 秒，用它来检测急停的话用户要等一分钟 —— 那不叫急停。
 const STOP_POLL_MS = 2000;
-
-// 急停信号。与 assistant-paused.flag 分开是有意的：
-// /pause 只写暂停标志(不再领新任务)，/stop 额外写这个(中断正在跑的任务)。
-// 分成两个文件而不是改暂停标志的内容格式 —— 后者会波及所有已经在读它的代码。
-export function isStopRequested(root = projectRoot(), existsSyncImpl = fs.existsSync) {
-  return existsSyncImpl(path.join(root, "data", "state", "assistant-stop.flag"));
-}
 
 // 杀整棵进程树。
 // 不能用 child.kill()：本仓审计已确认它只终止直接子进程，
@@ -788,9 +781,9 @@ export async function processCodexAutoQueue({
 } = {}) {
   loadEnv();
 
-  const pauseFile = resolveFromCwd("./data/state/assistant-paused.flag");
-  if (fs.existsSync(pauseFile)) {
-    console.log("[codex-auto-worker] 已暂停（assistant-paused.flag），跳过本轮任务处理。");
+  const pauseRoot = projectRoot();
+  if (isPaused(pauseRoot)) {
+    console.log("[codex-auto-worker] 已暂停，跳过本轮任务处理。");
     return [];
   }
 

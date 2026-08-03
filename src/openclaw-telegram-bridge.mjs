@@ -12,6 +12,7 @@ import { isExpired, loadApprovals, resolveApproval, saveApprovals } from "./secu
 import { classifyTask, TIER } from "./security/policy.mjs";
 import { requestJson } from "./telegram/http.mjs";
 import { fetchUpdates, nextOffset, parseUpdates } from "./telegram/updates.mjs";
+import { readPauseState, writePauseState } from "./state/pause.mjs";
 
 const DEFAULT_MESSAGE_FILE = "./.openclaw/state/agents/main/sessions/sessions.json.telegram-messages.json";
 const DEFAULT_STATE_FILE = "./data/state/openclaw-telegram-bridge-state.json";
@@ -131,26 +132,14 @@ function capabilityAvailability(capability, registry, statuses, selfId) {
   return "当前不可用";
 }
 
-// 读暂停标志里的时间戳。文件不存在返回 null；存在但内容坏/为空返回 ""，
-// 表示"确实暂停着，但说不出是什么时候" —— 这两种情况要区分，
-// 因为后者仍然必须告诉用户"你正停着"。
-export function readPausedAt(file, existsSyncImpl = fs.existsSync, readFileImpl = null) {
-  if (!existsSyncImpl(file)) return null;
-  try {
-    const read = readFileImpl || ((f) => fs.readFileSync(f, "utf8"));
-    return String(read(file) || "").trim();
-  } catch {
-    return "";
-  }
-}
-
-// 未暂停返回 ""（调用方据此决定是否插入这一行）。
-export function formatPausedNotice({ pausedAt, timeZone = "Australia/Melbourne" } = {}) {
-  if (pausedAt === null || pausedAt === undefined) return "";
+// 未暂停(level=none)返回 ""（调用方据此决定是否插入这一行）。
+export function formatPausedNotice({ level = "none", pausedAt = "", timeZone = "Australia/Melbourne" } = {}) {
+  if (level === "none") return "";
+  const label = level === "stop" ? "🛑 已急停" : "⏸ 已暂停";
   const parsed = pausedAt ? new Date(pausedAt) : null;
   if (!parsed || Number.isNaN(parsed.getTime())) {
     // 时间读不出来也要提示 —— 知道"停着"比知道"何时停的"重要得多。
-    return "🛑 已急停 · 发 /resume 恢复";
+    return `${label} · 发 /resume 恢复`;
   }
   const stamp = new Intl.DateTimeFormat("zh-CN", {
     timeZone,
@@ -160,7 +149,7 @@ export function formatPausedNotice({ pausedAt, timeZone = "Australia/Melbourne" 
     minute: "2-digit",
     hour12: false
   }).format(parsed);
-  return `🛑 已急停（${stamp} 起）· 发 /resume 恢复`;
+  return `${label}（${stamp} 起）· 发 /resume 恢复`;
 }
 
 export async function summarizeStatus(dependencies = {}) {
@@ -190,8 +179,10 @@ export async function summarizeStatus(dependencies = {}) {
   const selfLabel = selfId === "mac" ? "这台 Mac" : "这台 Windows 电脑";
   // 暂停提示必须排在最前面：用户按下 /stop 后，此前 /status 完全不提这件事，
   // 曾导致助手停了 6 小时才被发现（2026-08-03）。放在 flags 里不够显眼。
+  const pauseState = (dependencies.readPauseState || readPauseState)(path.dirname(dataDir));
   const pausedNotice = formatPausedNotice({
-    pausedAt: readPausedAt(path.join(dataDir, "state", "assistant-paused.flag"), existsSync, dependencies.readFile),
+    level: pauseState.level,
+    pausedAt: pauseState.at,
     timeZone: env.SCHOOL_TIMEZONE || env.DIGEST_TIMEZONE || "Australia/Melbourne"
   });
 
@@ -482,23 +473,17 @@ async function handleCommand({ token, chatId, text, dryRun }) {
   }
 
   if (command === "/pause") {
-    const flagFile = resolveFromCwd("./data/state/assistant-paused.flag");
-    fs.mkdirSync(path.dirname(flagFile), { recursive: true });
-    fs.writeFileSync(flagFile, `${new Date().toISOString()}\n`, "utf8");
-    await send(token, chatId, "已暂停自动摘要/检查。发 /resume 恢复。", dryRun);
+    writePauseState("pause", projectRoot());
+    await send(token, chatId, "⏸ 已暂停自动摘要/检查（不打断进行中的任务）。发 /resume 恢复。", dryRun);
     return true;
   }
 
   if (command === "/stop") {
-    const flagFile = resolveFromCwd("./data/state/assistant-paused.flag");
-    fs.mkdirSync(path.dirname(flagFile), { recursive: true });
-    fs.writeFileSync(flagFile, `${new Date().toISOString()}\n`, "utf8");
-    // 额外写急停标志：worker 在执行期间轮询它，发现后终止自己派生的子进程树。
+    // 写 level=stop：worker 在执行期间每 2 秒轮询它，发现后终止自己派生的子进程树。
     // **桥只写状态，绝不自己去杀进程** —— 它无法安全区分"正在执行的任务"与
     // 自己、supervisor、看门狗、game-mode watcher，按命令行特征杀早晚误杀。
     // 拥有子进程的是 worker，所以由 worker 动手。
-    const stopFile = resolveFromCwd("./data/state/assistant-stop.flag");
-    fs.writeFileSync(stopFile, `${new Date().toISOString()}\n`, "utf8");
+    writePauseState("stop", projectRoot());
     const approvals = loadApprovals();
     let deniedCount = 0;
     for (const [id, entry] of Object.entries(approvals)) {
@@ -525,11 +510,10 @@ async function handleCommand({ token, chatId, text, dryRun }) {
   }
 
   if (command === "/resume") {
-    const flagFile = resolveFromCwd("./data/state/assistant-paused.flag");
-    fs.rmSync(flagFile, { force: true });
-    // /resume 必须同时解除 /pause 与 /stop 两种状态，否则用户会陷入
-    // "已恢复但任务仍被立刻中断"的困惑。
-    fs.rmSync(resolveFromCwd("./data/state/assistant-stop.flag"), { force: true });
+    // level=none 同时解除 /pause 与 /stop 两种状态。
+    // 用"写入 none"而不是"删除文件"：状态文件要进灵魂包，而灵魂包只搬运存在的文件、
+    // 删除不会传播 —— 靠删文件表示恢复的话，大脑迁到另一台后会又变回暂停。
+    writePauseState("none", projectRoot());
     // 恢复后会立刻开始消化积压，用户有权先知道那是多少。
     // 统计失败不能影响恢复本身 —— 恢复是主动作，报告是附加信息。
     let backlog = "";

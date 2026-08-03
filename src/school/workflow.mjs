@@ -4,6 +4,7 @@ import { formatConfigReport, reportConfig } from "../config-doctor.mjs";
 import { envList, envNumber, loadEnv, resolveFromCwd, timestampForFile } from "../env.mjs";
 import { fetchGameNews } from "../rss.mjs";
 import { sendTelegramMessage } from "../telegram.mjs";
+import { isPaused } from "../state/pause.mjs";
 import { classifyPersonalMessage, classifySchoolMessage } from "./classifiers.mjs";
 import { collectDeadlines } from "./deadlines.mjs";
 import { runGmailExport, runOutlookExport } from "./exporters.mjs";
@@ -100,7 +101,7 @@ export function formatGameSummary(items, { slotLabel, timeZone, maxItems = 8 }) 
 
 export async function runSchoolCheckCli() {
   loadEnv();
-  if (fs.existsSync(resolveFromCwd("./data/state/assistant-paused.flag"))) {
+  if (isPaused()) {
     console.log("[school-check] 已暂停, 跳过本次。");
     return;
   }
