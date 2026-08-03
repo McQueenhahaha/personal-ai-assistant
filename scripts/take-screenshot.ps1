@@ -55,7 +55,11 @@ try {
     $bitmap.Dispose()
   }
 
-  [Console]::Out.WriteLine($OutFile)
+  # 用 Write-Output 而不是 [Console]::Out.WriteLine —— 后者直接写进程的 stdout 句柄，
+  # 绕开 PowerShell 的成功流：子进程调用(spawnSync 读管道)拿得到，但**进程内 & 调用拿不到**。
+  # 交互式 runner 正是进程内调用，曾因此拿到空输出、报"没有返回预期目录内的 PNG 绝对路径"。
+  # Write-Output 两种调用方式都能捕获。
+  Write-Output $OutFile
 } catch {
   [Console]::Error.WriteLine("Screenshot failed: $($_.Exception.Message)")
   exit 1

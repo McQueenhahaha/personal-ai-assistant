@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  INTERACTIVE_ACTIONS,
   MAINTENANCE_ACTIONS,
   runWindowsTask,
   validateWindowsPayload
@@ -74,17 +75,25 @@ test("Windows agent reports bad-payload for invalid run stdin", (t) => {
   assert.equal(response.error, "bad-payload");
 });
 
-test("Windows agent reports unknown-kind for a valid but unopened kind", (t) => {
-  const result = runAgent(
-    agentFixture(t),
-    "run",
-    JSON.stringify(payload({ kind: "outlook", prompt: "查看未读邮件" }))
-  );
-  assert.notEqual(result.status, 0);
-  const response = JSON.parse(result.stdout);
-  assert.equal(response.ok, false);
-  assert.equal(response.error, "unknown-kind");
-  assert.equal(response.taskId, TASK_ID);
+test("outlook is an opened kind and always uses the interactive request script", async () => {
+  const calls = [];
+  const promptText = JSON.stringify({ days: 14, maxMessages: 25 });
+  const response = await runWindowsTask(payload({ kind: "outlook", prompt: promptText }), {
+    root: ROOT,
+    env: {},
+    spawnSync(command, args, options) {
+      calls.push({ command, args, options });
+      return { status: 0, stdout: "Exported 25 Outlook message(s)\n", stderr: "" };
+    }
+  });
+
+  assert.equal(response.ok, true);
+  assert.deepEqual(INTERACTIVE_ACTIONS, ["screen", "outlook"]);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].args.at(4), /scripts[\\/]interactive[\\/]request-interactive-task\.ps1$/);
+  assert.deepEqual(calls[0].args.slice(-4), ["-Action", "outlook", "-TimeoutSeconds", "10"]);
+  assert.equal(calls[0].options.input, JSON.stringify({ prompt: promptText }));
+  assert.equal(calls[0].options.shell, false);
 });
 
 test("Windows payload validation requires the exact machine-readable shape", () => {
@@ -103,6 +112,7 @@ test("hostile prompt text remains data and never enters a command line", async (
   // screen handler ignores it and invokes only a fixed executable plus fixed args.
   const response = await runWindowsTask(payload({ prompt: promptText }), {
     root,
+    env: {},
     spawnSync(command, args, options) {
       calls.push({ command, args, options });
       return { status: 0, stdout: `${screenshot}\n`, stderr: "" };
@@ -116,6 +126,50 @@ test("hostile prompt text remains data and never enters a command line", async (
   assert.equal(JSON.stringify(calls[0].args).includes("whoami"), false);
   assert.equal(JSON.stringify(calls[0].args).includes("Get-ChildItem"), false);
   assert.equal(JSON.stringify(calls[0].args).includes("id_rsa"), false);
+});
+
+test("screen delegates in an SSH session and keeps hostile prompt text out of command arguments", async () => {
+  const root = path.resolve("windows-agent-security-root");
+  const screenshot = path.join(root, "data", "screenshots", "ssh-safe.png");
+  const promptText = "; whoami && type C:\\secret.txt\n`Get-ChildItem`";
+  const calls = [];
+  const response = await runWindowsTask(payload({ prompt: promptText }), {
+    root,
+    env: { SSH_CONNECTION: "100.64.0.1 50000 100.64.0.2 22" },
+    spawnSync(command, args, options) {
+      calls.push({ command, args, options });
+      return { status: 0, stdout: `${screenshot}\n`, stderr: "" };
+    }
+  });
+
+  assert.equal(response.ok, true);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].args.at(4), /scripts[\\/]interactive[\\/]request-interactive-task\.ps1$/);
+  assert.deepEqual(calls[0].args.slice(-4), ["-Action", "screen", "-TimeoutSeconds", "10"]);
+  assert.equal(calls[0].options.input, JSON.stringify({ prompt: promptText }));
+  assert.equal(JSON.stringify(calls[0].args).includes("whoami"), false);
+  assert.equal(JSON.stringify(calls[0].args).includes("secret.txt"), false);
+  assert.equal(JSON.stringify(calls[0].args).includes("Get-ChildItem"), false);
+});
+
+test("screen keeps the original direct screenshot path outside SSH sessions", async () => {
+  const root = path.resolve("windows-agent-local-root");
+  const screenshot = path.join(root, "data", "screenshots", "local.png");
+  const calls = [];
+  const response = await runWindowsTask(payload(), {
+    root,
+    env: { SSH_CONNECTION: "", SSH_CLIENT: "" },
+    spawnSync(command, args, options) {
+      calls.push({ command, args, options });
+      return { status: 0, stdout: `${screenshot}\n`, stderr: "" };
+    }
+  });
+
+  assert.equal(response.ok, true);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].args.at(4), /scripts[\\/]take-screenshot\.ps1$/);
+  assert.equal(calls[0].args.includes("-Action"), false);
+  assert.equal(calls[0].options.input, undefined);
 });
 
 test("browse receives prompt as data through the existing read-only capability", async () => {

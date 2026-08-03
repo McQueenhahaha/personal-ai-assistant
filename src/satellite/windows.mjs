@@ -19,6 +19,8 @@ export const MAINTENANCE_ACTIONS = Object.freeze([
   "volume-status"
 ]);
 
+export const INTERACTIVE_ACTIONS = Object.freeze(["screen", "outlook"]);
+
 function failure(error, detail, payload) {
   return {
     ok: false,
@@ -66,27 +68,8 @@ export function validateWindowsPayload(value) {
   return "";
 }
 
-function runScreen(payload, dependencies) {
-  const root = dependencies.root || projectRoot();
-  const spawnSyncImpl = dependencies.spawnSync || spawnSync;
-  const script = path.join(root, "scripts", "take-screenshot.ps1");
-  const result = spawnSyncImpl(
-    "powershell.exe",
-    ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script],
-    {
-      cwd: root,
-      encoding: "utf8",
-      shell: false,
-      windowsHide: true,
-      timeout: payload.timeoutSeconds * 1000
-    }
-  );
-  if (timedOut(result)) return failure("timeout", "截图处理超时", payload);
-  if (result?.error || result?.status !== 0) {
-    return failure("handler-failed", `截图失败：${processFailure(result)}`, payload);
-  }
-
-  const screenshotPath = String(result.stdout || "")
+function screenSuccess(output, payload, root) {
+  const screenshotPath = String(output || "")
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
@@ -104,6 +87,84 @@ function runScreen(payload, dependencies) {
     return failure("handler-failed", "截图脚本没有返回预期目录内的 PNG 绝对路径", payload);
   }
   return { ok: true, node: "windows", taskId: payload.taskId, kind: payload.kind, result: resolved };
+}
+
+function requestInteractive(payload, dependencies, action) {
+  const fixedAction = INTERACTIVE_ACTIONS.find((allowed) => allowed === action);
+  if (!fixedAction) {
+    return failure("interactive-not-allowed", "交互式 action 不在白名单内", payload);
+  }
+
+  const root = dependencies.root || projectRoot();
+  const spawnSyncImpl = dependencies.spawnSync || spawnSync;
+  const script = path.join(root, "scripts", "interactive", "request-interactive-task.ps1");
+  const result = spawnSyncImpl(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      script,
+      "-Action",
+      fixedAction,
+      "-TimeoutSeconds",
+      String(payload.timeoutSeconds)
+    ],
+    {
+      cwd: root,
+      encoding: "utf8",
+      input: JSON.stringify({ prompt: payload.prompt }),
+      shell: false,
+      windowsHide: true,
+      timeout: (payload.timeoutSeconds + 20) * 1000
+    }
+  );
+  if (timedOut(result)) return failure("timeout", "等待交互式任务结果超时", payload);
+  if (result?.error || result?.status !== 0) {
+    return failure("handler-failed", `交互式任务失败：${processFailure(result)}`, payload);
+  }
+  return {
+    ok: true,
+    node: "windows",
+    taskId: payload.taskId,
+    kind: payload.kind,
+    result: String(result.stdout || "").trim()
+  };
+}
+
+function runScreen(payload, dependencies) {
+  const env = dependencies.env || process.env;
+  const sshSession = Boolean(String(env.SSH_CONNECTION || "").trim() || String(env.SSH_CLIENT || "").trim());
+  const root = dependencies.root || projectRoot();
+
+  if (sshSession) {
+    const response = requestInteractive(payload, dependencies, "screen");
+    return response.ok ? screenSuccess(response.result, payload, root) : response;
+  }
+
+  const spawnSyncImpl = dependencies.spawnSync || spawnSync;
+  const script = path.join(root, "scripts", "take-screenshot.ps1");
+  const result = spawnSyncImpl(
+    "powershell.exe",
+    ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script],
+    {
+      cwd: root,
+      encoding: "utf8",
+      shell: false,
+      windowsHide: true,
+      timeout: payload.timeoutSeconds * 1000
+    }
+  );
+  if (timedOut(result)) return failure("timeout", "截图处理超时", payload);
+  if (result?.error || result?.status !== 0) {
+    return failure("handler-failed", `截图失败：${processFailure(result)}`, payload);
+  }
+  return screenSuccess(result.stdout, payload, root);
+}
+
+function runOutlook(payload, dependencies) {
+  return requestInteractive(payload, dependencies, "outlook");
 }
 
 async function runBrowse(payload, dependencies) {
@@ -169,6 +230,7 @@ function runMaintenance(payload, dependencies) {
 const HANDLERS = Object.freeze({
   screen: runScreen,
   browse: runBrowse,
+  outlook: runOutlook,
   maintenance: runMaintenance
 });
 
