@@ -96,6 +96,30 @@ export function isWorkerPidAlive(pid, spawnSyncImpl = spawnSync) {
   return !result?.error && result?.status === 0 && /codex-auto-worker\.mjs/i.test(String(result.stdout || ""));
 }
 
+export const STOP_FLAG_RELATIVE = "./data/state/assistant-stop.flag";
+// 急停检测间隔。进度回调默认 60 秒，用它来检测急停的话用户要等一分钟 —— 那不叫急停。
+const STOP_POLL_MS = 2000;
+
+// 急停信号。与 assistant-paused.flag 分开是有意的：
+// /pause 只写暂停标志(不再领新任务)，/stop 额外写这个(中断正在跑的任务)。
+// 分成两个文件而不是改暂停标志的内容格式 —— 后者会波及所有已经在读它的代码。
+export function isStopRequested(root = projectRoot(), existsSyncImpl = fs.existsSync) {
+  return existsSyncImpl(path.join(root, "data", "state", "assistant-stop.flag"));
+}
+
+// 杀整棵进程树。
+// 不能用 child.kill()：本仓审计已确认它只终止直接子进程，
+// codex 派生的孙进程(DISM/SFC 之类)会继续跑下去。
+export function killProcessTree(pid, spawnSyncImpl = spawnSync) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  const result = spawnSyncImpl(
+    "taskkill.exe",
+    ["/PID", String(pid), "/T", "/F"],
+    { encoding: "utf8", shell: false, windowsHide: true }
+  );
+  return !result?.error;
+}
+
 const FORCE_NODE_DIRECTIVE = /^\s*\[force-node:(mac|windows)\]\s*/i;
 const OUTLOOK_INTENT = /\boutlook\b|微软(?:邮箱|邮件)|学校邮箱/i;
 const NODE_CAPABILITY_BY_ROUTE = {
@@ -683,9 +707,22 @@ function runCodexExec({ root, prompt, taskStem, onProgress }) {
 
     const logStream = createRedactingLogWriter(jsonLogFile);
     const timer = setTimeout(() => {
-      child.kill();
+      // 用整棵树而不是 child.kill()：后者会留下 codex 派生的孙进程继续跑。
+      killProcessTree(child.pid);
       reject(new Error(`Codex exec timed out after ${timeoutMs / 1000}s`));
     }, timeoutMs);
+
+    // 急停轮询。间隔要远小于进度回调(默认 60s) —— 用户按下急停后
+    // 还要等一分钟才停下，那不叫急停。
+    const abortTimer = setInterval(() => {
+      if (!isStopRequested(root)) return;
+      clearInterval(abortTimer);
+      killProcessTree(child.pid);
+      const error = new Error("用户急停：已终止正在执行的任务");
+      error.abortedByStop = true;
+      reject(error);
+    }, STOP_POLL_MS);
+
     const startedAt = Date.now();
     const progressTimer = setInterval(() => {
       Promise.resolve(
@@ -704,12 +741,14 @@ function runCodexExec({ root, prompt, taskStem, onProgress }) {
     child.on("error", (error) => {
       clearTimeout(timer);
       clearInterval(progressTimer);
+      clearInterval(abortTimer);
       logStream.end();
       reject(error);
     });
     child.on("close", (code) => {
       clearTimeout(timer);
       clearInterval(progressTimer);
+      clearInterval(abortTimer);
       logStream.end();
       if (code !== 0) {
         reject(new Error(`Codex exec failed with exit ${code}. Log: ${jsonLogFile}`));

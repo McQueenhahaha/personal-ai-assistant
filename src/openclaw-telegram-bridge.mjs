@@ -493,6 +493,12 @@ async function handleCommand({ token, chatId, text, dryRun }) {
     const flagFile = resolveFromCwd("./data/state/assistant-paused.flag");
     fs.mkdirSync(path.dirname(flagFile), { recursive: true });
     fs.writeFileSync(flagFile, `${new Date().toISOString()}\n`, "utf8");
+    // 额外写急停标志：worker 在执行期间轮询它，发现后终止自己派生的子进程树。
+    // **桥只写状态，绝不自己去杀进程** —— 它无法安全区分"正在执行的任务"与
+    // 自己、supervisor、看门狗、game-mode watcher，按命令行特征杀早晚误杀。
+    // 拥有子进程的是 worker，所以由 worker 动手。
+    const stopFile = resolveFromCwd("./data/state/assistant-stop.flag");
+    fs.writeFileSync(stopFile, `${new Date().toISOString()}\n`, "utf8");
     const approvals = loadApprovals();
     let deniedCount = 0;
     for (const [id, entry] of Object.entries(approvals)) {
@@ -521,6 +527,9 @@ async function handleCommand({ token, chatId, text, dryRun }) {
   if (command === "/resume") {
     const flagFile = resolveFromCwd("./data/state/assistant-paused.flag");
     fs.rmSync(flagFile, { force: true });
+    // /resume 必须同时解除 /pause 与 /stop 两种状态，否则用户会陷入
+    // "已恢复但任务仍被立刻中断"的困惑。
+    fs.rmSync(resolveFromCwd("./data/state/assistant-stop.flag"), { force: true });
     // 恢复后会立刻开始消化积压，用户有权先知道那是多少。
     // 统计失败不能影响恢复本身 —— 恢复是主动作，报告是附加信息。
     let backlog = "";
