@@ -9,9 +9,11 @@ export const OWNER_COMMAND_MENU = [
   { command: "screen", description: "🖥 查看当前电脑屏幕（可后接说明）" },
   { command: "codex", description: "🛠 让电脑端 Codex 改/查本项目（后接任务）" },
   { command: "local", description: "🤖 交给本地模型队列处理（后接任务）" },
+  // 描述必须与实际行为一致：两者都只是"暂停领取新任务"，
+  // 目前都**不会中断已经在跑的任务**（那是后续工作）。不要在菜单里承诺尚未实现的能力。
   { command: "pause", description: "⏸ 暂停自动摘要与检查" },
-  { command: "stop", description: "🛑 急停所有自动处理并作废待确认任务" },
-  { command: "resume", description: "▶️ 恢复自动摘要与检查" },
+  { command: "stop", description: "🛑 暂停自动处理并作废待确认（不中断进行中的任务）" },
+  { command: "resume", description: "▶️ 恢复，并报告暂停期间的积压" },
   { command: "defender_status", description: "🛡 Defender 状态" },
   { command: "defender_scan", description: "🛡 Defender 快速扫描" },
   { command: "sfc_scan", description: "🔧 系统文件检查 (SFC)" },

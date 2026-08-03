@@ -131,6 +131,38 @@ function capabilityAvailability(capability, registry, statuses, selfId) {
   return "当前不可用";
 }
 
+// 读暂停标志里的时间戳。文件不存在返回 null；存在但内容坏/为空返回 ""，
+// 表示"确实暂停着，但说不出是什么时候" —— 这两种情况要区分，
+// 因为后者仍然必须告诉用户"你正停着"。
+export function readPausedAt(file, existsSyncImpl = fs.existsSync, readFileImpl = null) {
+  if (!existsSyncImpl(file)) return null;
+  try {
+    const read = readFileImpl || ((f) => fs.readFileSync(f, "utf8"));
+    return String(read(file) || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+// 未暂停返回 ""（调用方据此决定是否插入这一行）。
+export function formatPausedNotice({ pausedAt, timeZone = "Australia/Melbourne" } = {}) {
+  if (pausedAt === null || pausedAt === undefined) return "";
+  const parsed = pausedAt ? new Date(pausedAt) : null;
+  if (!parsed || Number.isNaN(parsed.getTime())) {
+    // 时间读不出来也要提示 —— 知道"停着"比知道"何时停的"重要得多。
+    return "🛑 已急停 · 发 /resume 恢复";
+  }
+  const stamp = new Intl.DateTimeFormat("zh-CN", {
+    timeZone,
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).format(parsed);
+  return `🛑 已急停（${stamp} 起）· 发 /resume 恢复`;
+}
+
 export async function summarizeStatus(dependencies = {}) {
   const env = dependencies.env || process.env;
   const platform = dependencies.platform || process.platform;
@@ -156,7 +188,15 @@ export async function summarizeStatus(dependencies = {}) {
   const commonStatus = capabilityAvailability("files", registry, statuses, selfId);
   const windowsStatus = capabilityAvailability("browser", registry, statuses, selfId);
   const selfLabel = selfId === "mac" ? "这台 Mac" : "这台 Windows 电脑";
+  // 暂停提示必须排在最前面：用户按下 /stop 后，此前 /status 完全不提这件事，
+  // 曾导致助手停了 6 小时才被发现（2026-08-03）。放在 flags 里不够显眼。
+  const pausedNotice = formatPausedNotice({
+    pausedAt: readPausedAt(path.join(dataDir, "state", "assistant-paused.flag"), existsSync, dependencies.readFile),
+    timeZone: env.SCHOOL_TIMEZONE || env.DIGEST_TIMEZONE || "Australia/Melbourne"
+  });
+
   return [
+    ...(pausedNotice ? [pausedNotice, ""] : []),
     "AI 助手状态",
     "",
     `当前运行节点：${selfLabel}`,
@@ -481,7 +521,24 @@ async function handleCommand({ token, chatId, text, dryRun }) {
   if (command === "/resume") {
     const flagFile = resolveFromCwd("./data/state/assistant-paused.flag");
     fs.rmSync(flagFile, { force: true });
-    await send(token, chatId, "已恢复。", dryRun);
+    // 恢复后会立刻开始消化积压，用户有权先知道那是多少。
+    // 统计失败不能影响恢复本身 —— 恢复是主动作，报告是附加信息。
+    let backlog = "";
+    try {
+      const codexInbox = process.env.CODEX_QUEUE_INBOX || "./data/queues/codex/inbox";
+      ensureQueue(codexInbox);
+      const pending = listPendingTasks(codexInbox).length;
+      const approvals = loadApprovals();
+      const denied = Object.values(approvals).filter((entry) => entry.status === "denied").length;
+      backlog = pending > 0
+        ? `暂停期间堆积 ${pending} 个待处理任务`
+        : "暂停期间无堆积";
+      if (denied > 0) backlog += `，另有 ${denied} 条待确认已作废`;
+    } catch (error) {
+      // 这里用 console 而不是 logger：logger 是轮询循环的参数，在 handleCommand 作用域内不存在。
+      console.error(`统计积压失败：${errorDetails(error)}`);
+    }
+    await send(token, chatId, backlog ? `▶️ 已恢复。${backlog}。` : "▶️ 已恢复。", dryRun);
     return true;
   }
 
