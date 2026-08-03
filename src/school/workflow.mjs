@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import { formatConfigReport, reportConfig } from "../config-doctor.mjs";
 import { envList, envNumber, loadEnv, resolveFromCwd, timestampForFile } from "../env.mjs";
 import { fetchGameNews } from "../rss.mjs";
@@ -9,11 +10,12 @@ import { runGmailExport, runOutlookExport } from "./exporters.mjs";
 import { countGameSources, gameKey, gamePrefix, translateGameTitle } from "./game-news.mjs";
 import { personalMessagesFromDrops, schoolMessagesFromDrops } from "./mail-drops.mjs";
 import { sendOrPrint } from "./notifier.mjs";
-import { dueSlots } from "./schedule.mjs";
-import { compactLine, formatPersonalSummary, formatSchoolSummary } from "./summaries.mjs";
+import { dueSlots, parseClock } from "./schedule.mjs";
+import { compactLine, formatCombinedDigest } from "./summaries.mjs";
 import { loadState, saveState, statePath } from "./state.mjs";
 
 const DEFAULT_TIME_ZONE = "UTC";
+const DIGEST_MIN_INTERVAL_MS = 5 * 60000;
 
 function hasArg(name) {
   return process.argv.includes(name);
@@ -32,6 +34,46 @@ export function shouldAlertGmailFailure(streak, lastAlertIso, nowMs, minStreak =
   const last = new Date(lastAlertIso).getTime();
   if (!Number.isFinite(last)) return true;
   return (nowMs - last) >= cooldownMs;
+}
+
+export function digestContentKey({ schoolMessages = [], personalMessages = [], gameItems = [] }) {
+  const identities = [
+    ...schoolMessages.map((message) => `school:${message.key || JSON.stringify([message.subject, message.from, message.date, message.body])}`),
+    ...personalMessages.map((message) => `personal:${message.key || JSON.stringify([message.subject, message.from, message.date, message.body])}`),
+    ...gameItems.map((item) => `game:${gameKey(item)}`)
+  ];
+  const canonical = [...new Set(identities)].sort();
+  return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
+}
+
+export function shouldSendDigest({ contentKey, lastSentKey, lastSentAtMs, nowMs, minIntervalMs }) {
+  if (contentKey === lastSentKey) {
+    return { send: false, reason: "same-content" };
+  }
+
+  const previousSentAt = lastSentAtMs === null || lastSentAtMs === undefined ? Number.NaN : Number(lastSentAtMs);
+  if (Number.isFinite(previousSentAt) && (nowMs - previousSentAt) < minIntervalMs) {
+    return { send: false, reason: "too-soon" };
+  }
+
+  return { send: true, reason: lastSentKey ? "new-content" : "first-send" };
+}
+
+export function updateGameCatchup({ activeCatchup, slots, newItemCount, catchupMinutes, nowMs, force }) {
+  if (activeCatchup && newItemCount > 0) {
+    return null;
+  }
+
+  if (!force && slots.length > 0 && newItemCount === 0 && catchupMinutes > 0) {
+    return {
+      slotKey: slots.map((slot) => slot.key).join(","),
+      slotLabel: slots.map((slot) => slot.label).join(", "),
+      startedAt: new Date(nowMs).toISOString(),
+      until: new Date(nowMs + catchupMinutes * 60000).toISOString()
+    };
+  }
+
+  return activeCatchup || null;
 }
 
 export function formatGameSummary(items, { slotLabel, timeZone, maxItems = 8 }) {
@@ -74,6 +116,7 @@ export async function runSchoolCheckCli() {
   const checkOnly = hasArg("--check-only");
   const timeZone = process.env.SCHOOL_TIMEZONE || DEFAULT_TIME_ZONE;
   const times = envList("SCHOOL_CHECK_TIMES", ["10:30", "14:00", "20:00"]);
+  const gameNewsTimes = envList("GAME_NEWS_SLOTS", ["20:00"]);
   const graceMinutes = envNumber("SCHOOL_CHECK_GRACE_MINUTES", 25);
   const exportDays = envNumber("SCHOOL_EXPORT_DAYS", 14);
   const exportMaxMessages = envNumber("SCHOOL_EXPORT_MAX_MESSAGES", 60);
@@ -84,7 +127,7 @@ export async function runSchoolCheckCli() {
   const gmailAccount = process.env.GOG_ACCOUNT || "";
   const maxFiles = envNumber("MAIL_DROP_MAX_FILES", 20);
   const reminderMinutes = envNumber("SCHOOL_REMINDER_MINUTES_BEFORE_DUE", 60);
-  const sendEmptyCheckSummary = (process.env.SEND_EMPTY_CHECK_SUMMARY || "true").toLowerCase() === "true";
+  const sendEmptyCheckSummary = (process.env.SEND_EMPTY_CHECK_SUMMARY || "false").toLowerCase() === "true";
   const schoolCatchupMinutes = envNumber("SCHOOL_SYNC_CATCHUP_MINUTES", 90);
   const gameCatchupMinutes = envNumber("GAME_SYNC_CATCHUP_MINUTES", 120);
   const state = loadState();
@@ -98,16 +141,25 @@ export async function runSchoolCheckCli() {
   state.lastOutlookExportAt ||= null;
   state.gmailFailStreak ||= 0;
   state.lastGmailAuthAlertAt ||= null;
+  state.lastDigestKey ||= null;
+  state.lastDigestSentAt ||= null;
 
   const slots = dueSlots({ now, timeZone, times, graceMinutes, state });
+  const gameSlots = dueSlots({ now, timeZone, times: gameNewsTimes, graceMinutes, state });
+  const scheduledSlots = [...new Map([...slots, ...gameSlots].map((slot) => [slot.key, slot])).values()];
+  const gameNewsSlotLabels = new Set(gameNewsTimes.map((time) => parseClock(time)?.label).filter(Boolean));
   const activeSchoolCatchup = state.schoolCatchup?.until && new Date(state.schoolCatchup.until) > now
     ? state.schoolCatchup
     : null;
   if (state.schoolCatchup && !activeSchoolCatchup) {
     state.schoolCatchup = null;
   }
-  const activeGameCatchup = state.gameCatchup?.until && new Date(state.gameCatchup.until) > now
+  const activeGameCatchupCandidate = state.gameCatchup?.until && new Date(state.gameCatchup.until) > now
     ? state.gameCatchup
+    : null;
+  const activeGameCatchup = activeGameCatchupCandidate
+    && String(activeGameCatchupCandidate.slotLabel || "").split(",").some((label) => gameNewsSlotLabels.has(label.trim()))
+    ? activeGameCatchupCandidate
     : null;
   if (state.gameCatchup && !activeGameCatchup) {
     state.gameCatchup = null;
@@ -118,6 +170,11 @@ export async function runSchoolCheckCli() {
   let exportOutput = "";
   let telegramMessagesSent = 0;
   let emptyCheckSent = false;
+  let digestSchoolMessages = [];
+  let digestPersonalMessages = [];
+  let digestGameItems = [];
+  let digestSkippedLowPriority = 0;
+  let digestSendReason = "empty-content";
 
   if (shouldExport && !checkOnly && !throttleOutlook) {
     exportOutput = runOutlookExport({ days: exportDays, maxMessages: exportMaxMessages, syncWaitSeconds: outlookSyncWaitSeconds });
@@ -167,13 +224,8 @@ export async function runSchoolCheckCli() {
       : personalMessages.filter((message) => !seenPersonal.has(message.key));
     const importantPersonalMessages = newPersonalMessages.filter((message) => classifyPersonalMessage(message).important);
     const skippedLowPriority = Math.max(0, newPersonalMessages.length - importantPersonalMessages.length);
-    const slotLabel = forcePersonal ? "手动" : slots.map((slot) => slot.label).join(", ");
-
-    if (importantPersonalMessages.length > 0 || forcePersonal) {
-      await sendOrPrint(formatPersonalSummary(importantPersonalMessages, { slotLabel, timeZone, skippedLowPriority }), dryRun);
-      telegramMessagesSent += 1;
-      personalUpdatesSent = Math.min(importantPersonalMessages.length, 8);
-    }
+    digestPersonalMessages = importantPersonalMessages;
+    digestSkippedLowPriority = skippedLowPriority;
 
     for (const message of personalMessages) {
       seenPersonal.add(message.key);
@@ -184,14 +236,7 @@ export async function runSchoolCheckCli() {
   if (shouldExport) {
     const seen = new Set(state.seenMessageKeys);
     const newMessages = includeSeen ? messages : messages.filter((message) => !seen.has(message.key));
-    const slotLabel = forceSchool
-      ? "手动"
-      : (slots.length > 0 ? slots.map((slot) => slot.label).join(", ") : `${activeSchoolCatchup?.slotLabel || "定时"} 补查`);
-
-    if (newMessages.length > 0 || forceSchool) {
-      await sendOrPrint(formatSchoolSummary(newMessages, { slotLabel, timeZone }), dryRun);
-      telegramMessagesSent += 1;
-    }
+    digestSchoolMessages = newMessages;
 
     for (const message of messages) {
       seen.add(message.key);
@@ -217,7 +262,7 @@ export async function runSchoolCheckCli() {
     }
   }
 
-  const shouldCheckGames = forceGame || slots.length > 0 || Boolean(activeGameCatchup);
+  const shouldCheckGames = forceGame || gameSlots.length > 0 || Boolean(activeGameCatchup);
   let gameItems = [];
   let gameUpdatesSent = 0;
   if (shouldCheckGames) {
@@ -231,29 +276,24 @@ export async function runSchoolCheckCli() {
 
     const seenGames = new Set(state.seenGameKeys);
     const newGameItems = includeSeen ? gameItems : gameItems.filter((item) => !seenGames.has(gameKey(item)));
-    const slotLabel = forceGame
-      ? "手动"
-      : (slots.length > 0 ? slots.map((slot) => slot.label).join(", ") : `${activeGameCatchup?.slotLabel || "定时"} 补查`);
-
-    if (newGameItems.length > 0 || forceGame) {
-      await sendOrPrint(formatGameSummary(newGameItems, { slotLabel, timeZone, maxItems: envNumber("GAME_CHECK_MAX_ITEMS", 8) }), dryRun);
-      telegramMessagesSent += 1;
-      gameUpdatesSent = newGameItems.length;
-    }
+    digestGameItems = newGameItems;
 
     for (const item of gameItems) {
       seenGames.add(gameKey(item));
     }
     state.seenGameKeys = [...seenGames].slice(-2000);
 
-    if (!forceGame && slots.length > 0 && gameCatchupMinutes > 0) {
-      const slotLabelForCatchup = slots.map((slot) => slot.label).join(", ");
-      state.gameCatchup = {
-        slotKey: slots.map((slot) => slot.key).join(","),
-        slotLabel: slotLabelForCatchup,
-        startedAt: now.toISOString(),
-        until: new Date(now.getTime() + gameCatchupMinutes * 60000).toISOString()
-      };
+    state.gameCatchup = updateGameCatchup({
+      activeCatchup: activeGameCatchup,
+      slots: gameSlots,
+      newItemCount: newGameItems.length,
+      catchupMinutes: gameCatchupMinutes,
+      nowMs: now.getTime(),
+      force: forceGame
+    });
+
+    for (const slot of gameSlots) {
+      state.slots[slot.key] = now.toISOString();
     }
   }
 
@@ -277,8 +317,56 @@ export async function runSchoolCheckCli() {
     reminded.add(deadline.key);
   }
 
-  if (sendEmptyCheckSummary && slots.length > 0 && telegramMessagesSent === 0) {
-    const slotLabel = slots.map((slot) => slot.label).join(", ");
+  const forceDigest = forceSchool || forcePersonal || forceGame;
+  const catchupLabels = [
+    digestSchoolMessages.length > 0 ? activeSchoolCatchup?.slotLabel : null,
+    digestGameItems.length > 0 ? activeGameCatchup?.slotLabel : null
+  ].filter(Boolean);
+  const digestSlotLabel = forceDigest
+    ? "手动"
+    : (scheduledSlots.length > 0
+        ? scheduledSlots.map((slot) => slot.label).join(", ")
+        : `${[...new Set(catchupLabels)].join(", ") || "定时"} 补查`);
+  const digestText = formatCombinedDigest({
+    schoolMessages: digestSchoolMessages,
+    personalMessages: digestPersonalMessages,
+    gameItems: digestGameItems
+  }, {
+    slotLabel: digestSlotLabel,
+    timeZone,
+    skippedLowPriority: digestSkippedLowPriority,
+    maxGameItems: envNumber("GAME_CHECK_MAX_ITEMS", 8)
+  });
+
+  if (digestText) {
+    const contentKey = digestContentKey({
+      schoolMessages: digestSchoolMessages,
+      personalMessages: digestPersonalMessages,
+      gameItems: digestGameItems
+    });
+    const decision = shouldSendDigest({
+      contentKey,
+      lastSentKey: state.lastDigestKey,
+      lastSentAtMs: state.lastDigestSentAt ? new Date(state.lastDigestSentAt).getTime() : null,
+      nowMs: now.getTime(),
+      minIntervalMs: DIGEST_MIN_INTERVAL_MS
+    });
+    digestSendReason = decision.reason;
+
+    if (decision.send) {
+      await sendOrPrint(digestText, dryRun);
+      telegramMessagesSent += 1;
+      personalUpdatesSent = Math.min(digestPersonalMessages.length, 8);
+      gameUpdatesSent = digestGameItems.length;
+      state.lastDigestKey = contentKey;
+      state.lastDigestSentAt = now.toISOString();
+    } else {
+      console.log(`[school-check] 摘要未发送：${decision.reason}`);
+    }
+  }
+
+  if (sendEmptyCheckSummary && scheduledSlots.length > 0 && telegramMessagesSent === 0) {
+    const slotLabel = scheduledSlots.map((slot) => slot.label).join(", ");
     const lines = [
       `定时检查完成（${timeZone} ${slotLabel}）`,
       "",
@@ -330,6 +418,7 @@ export async function runSchoolCheckCli() {
     schoolCatchupUntil: state.schoolCatchup?.until || null,
     gameCatchupActive: Boolean(state.gameCatchup),
     gameCatchupUntil: state.gameCatchup?.until || null,
+    digestSendReason,
     stateFile: statePath()
   };
   fs.mkdirSync(resolveFromCwd("./data/logs"), { recursive: true });

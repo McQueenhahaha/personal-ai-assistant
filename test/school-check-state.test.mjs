@@ -18,7 +18,9 @@ const defaultState = {
   seenGameKeys: [],
   remindedDeadlineKeys: [],
   schoolCatchup: null,
-  gameCatchup: null
+  gameCatchup: null,
+  lastDigestKey: null,
+  lastDigestSentAt: null
 };
 
 function withTempCwd(fn) {

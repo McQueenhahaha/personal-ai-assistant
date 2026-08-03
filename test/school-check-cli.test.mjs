@@ -70,6 +70,44 @@ function readOnlyRunSummary(root) {
   return summary;
 }
 
+function writeDueSoonFixture({ root, schoolDrop }, now) {
+  const dueAt = new Date(now.getTime() + 30 * 60000);
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", {
+    timeZone: "Etc/GMT-10",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true
+  }).formatToParts(dueAt).map((part) => [part.type, part.value]));
+  fs.writeFileSync(
+    path.join(schoolDrop, "due-soon.eml"),
+    [
+      "Subject: Assignment due soon",
+      "From: School Canvas <canvas@example.edu>",
+      "Date: Mon, 3 Aug 2026 10:00:00 +1000",
+      "",
+      `Assignment due ${parts.month} ${parts.day}, ${parts.year} at ${parts.hour}:${parts.minute} ${parts.dayPeriod.toLowerCase()}`
+    ].join("\n"),
+    "utf8"
+  );
+
+  const stateDir = path.join(root, "data", "state");
+  fs.mkdirSync(stateDir, { recursive: true });
+  fs.writeFileSync(path.join(stateDir, "school-check-state.json"), JSON.stringify({
+    slots: {},
+    seenMessageKeys: [],
+    seenPersonalKeys: [],
+    seenGameKeys: [],
+    remindedDeadlineKeys: [],
+    schoolCatchup: null,
+    gameCatchup: null,
+    lastDigestKey: "previous-content",
+    lastDigestSentAt: now.toISOString()
+  }), "utf8");
+}
+
 test("school-check CLI dry-run check-only writes a temp run summary without Telegram", async (t) => {
   const context = makeCliRoot(t);
 
@@ -109,4 +147,25 @@ test("school-check CLI force-school dry-run prints the school summary and writes
   assert.equal(summary.exported, false);
   assert.equal(summary.messages, 1);
   assert.equal(summary.telegramMessagesSent, 1);
+});
+
+test("deadline reminder bypasses merged digest throttling", async (t) => {
+  const context = makeCliRoot(t);
+  writeDueSoonFixture(context, new Date());
+
+  const result = await runSchoolCheck({
+    ...context,
+    args: ["--dry-run", "--check-only", "--force-school"]
+  });
+
+  assert.equal(result.code, 0);
+  assert.equal(result.stderr, "");
+  assert.match(result.stdout, /学校临期提醒/);
+  assert.match(result.stdout, /摘要未发送：too-soon/);
+  assert.doesNotMatch(result.stdout, /📬/);
+
+  const summary = readOnlyRunSummary(context.root);
+  assert.equal(summary.remindersSent, 1);
+  assert.equal(summary.telegramMessagesSent, 1);
+  assert.equal(summary.digestSendReason, "too-soon");
 });
