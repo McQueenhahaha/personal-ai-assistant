@@ -17,34 +17,18 @@ foreach ($arg in $args) {
   }
 }
 
-# 定时检查只在【当前持有大脑的那台机器】上运行。
-#
-# 为什么必须这样（2026-08-03 实测的真实故障）：
-# school-check-state.json 在灵魂包清单里。当大脑在另一台时，本机是待命节点，
-# supervisor 每约 35 秒 pullSoul 一次、用对端副本覆盖本地状态。
-# 而定时检查若仍在本机运行，它刚存下的去重状态(seenGameKeys / lastDigestKey)
-# 会在几十秒内被冲掉 —— 于是每次运行都判定为"首次发送"，
-# 同一批游戏资讯每 5 分钟重发一次。用户实际被这样刷屏过。
-#
-# 手动触发(带 --force-* 等参数)不受此限制：那是用户明确要求的一次性动作。
-# 没有租约文件时视为单机模式，照常运行。
+# 定时工作只在【持有大脑租约的那台机器】上运行。规则对称：无论大脑在 Windows
+# 还是 Mac，非持有方都不该跑 —— 否则它写下的去重状态会被灵魂包同步用对端副本冲掉，
+# 导致每次运行都判"首次发送"，同一批内容反复推送（2026-08-03 实测的刷屏故障）。
+# 判定逻辑集中在 src/state/brain-guard.mjs，两个平台共用一份实现。
+# 手动触发不受此限制：那是用户明确要求的一次性动作。
 if (-not $manualRun) {
-  $LeaseFile = Join-Path $DataDir "state/brain-lease.json"
-  if (Test-Path -LiteralPath $LeaseFile) {
-    $SelfId = "windows"
-    if ($env:BRAIN_NODE_ID) { $SelfId = $env:BRAIN_NODE_ID }
-    $Holder = ""
-    try {
-      $Holder = (Get-Content -Raw -LiteralPath $LeaseFile | ConvertFrom-Json).holder
-    } catch {
-      $Holder = ""
-    }
-    if ($Holder -and ($Holder -ne $SelfId)) {
-      New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
-      $msg = "[" + (Get-Date -Format o) + "] Skipped: brain is on '" + $Holder + "', not this node ('" + $SelfId + "')."
-      $msg | Out-File -FilePath (Join-Path $LogDir "school-check-skipped-not-brain.log") -Append -Encoding UTF8
-      exit 0
-    }
+  & node .\src\state\brain-guard.mjs | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+    $msg = "[" + (Get-Date -Format o) + "] Skipped: this node does not hold the brain lease."
+    $msg | Out-File -FilePath (Join-Path $LogDir "school-check-skipped-not-brain.log") -Append -Encoding UTF8
+    exit 0
   }
 }
 
