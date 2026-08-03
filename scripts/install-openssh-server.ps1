@@ -31,14 +31,16 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 }
 
 $RepoRoot   = Split-Path -Parent $PSScriptRoot
-$AgentPath  = Join-Path $RepoRoot "satellite\windows-agent.ps1"
+$AgentPath  = Join-Path $RepoRoot "satellite\windows-agent.ps1"      # 源码（可编辑）
+$DeployDir  = Join-Path $env:ProgramData "PAI"                       # 部署位置（仅管理员可写）
+$DeployedAgent = Join-Path $DeployDir "windows-agent.ps1"
 $SshDataDir = Join-Path $env:ProgramData "ssh"
 $ConfigPath = Join-Path $SshDataDir "sshd_config"
 $AdminKeys  = Join-Path $SshDataDir "administrators_authorized_keys"
 
 if (-not (Test-Path -LiteralPath $AgentPath)) { throw "找不到受限代理：$AgentPath" }
 
-Write-Host "== 1/6 安装 OpenSSH Server =="
+Write-Host "== 1/7 安装 OpenSSH Server =="
 # 通配符可能匹配到多个对象；必须取单个，否则 $cap.Name 是数组，
 # 传给 Add-WindowsCapability 会抛错并中断整个脚本（曾实际发生）。
 $cap = @(Get-WindowsCapability -Online -Name 'OpenSSH.Server*') |
@@ -55,7 +57,7 @@ if (-not (Get-Service sshd -ErrorAction SilentlyContinue)) {
   throw "sshd 服务未注册，功能包可能没装成功。"
 }
 
-Write-Host "== 2/6 生成主机密钥并首次启动 =="
+Write-Host "== 2/7 生成主机密钥并首次启动 =="
 if (-not (Test-Path -LiteralPath $SshDataDir)) {
   New-Item -ItemType Directory -Force -Path $SshDataDir | Out-Null
 }
@@ -76,7 +78,7 @@ if ((Get-Service sshd).Status -ne 'Running') { Start-Service sshd }
 Write-Host "   sshd 首次启动成功"
 Stop-Service sshd
 
-Write-Host "== 3/6 写入加固配置 =="
+Write-Host "== 3/7 写入加固配置 =="
 if ((Test-Path -LiteralPath $ConfigPath) -and -not (Test-Path -LiteralPath "$ConfigPath.orig")) {
   Copy-Item -LiteralPath $ConfigPath -Destination "$ConfigPath.orig"
   Write-Host "   原配置已备份到 sshd_config.orig"
@@ -114,10 +116,12 @@ Match Group administrators
 "@
 [System.IO.File]::WriteAllText($ConfigPath, $hardened, [System.Text.UTF8Encoding]::new($false))
 
-Write-Host "== 4/6 安装对端公钥（带 forced-command）=="
+Write-Host "== 4/7 安装对端公钥（带 forced-command）=="
 # forced-command：无论对端请求执行什么，sshd 只会运行这个代理；
 # 真正的请求内容进入 SSH_ORIGINAL_COMMAND，由代理自行决定是否执行（默认拒绝）。
-$restrictions = 'command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"' + $AgentPath + '\"",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty,no-user-rc'
+# 指向**部署副本**而不是仓库源文件（见第 5 步的说明）。
+# 同时把仓库根目录作为参数传进去 —— 部署副本不在仓库里，无法靠 $PSScriptRoot 推断。
+$restrictions = 'command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"' + $DeployedAgent + '\" -RepoRoot \"' + $RepoRoot + '\"",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty,no-user-rc'
 $keyLine = "$restrictions $PeerPublicKey"
 
 $existing = @()
@@ -132,20 +136,35 @@ $lines = @($existing + $keyLine | Where-Object { $_ -and $_.Trim() })
 icacls $AdminKeys /inheritance:r /grant "Administrators:F" /grant "SYSTEM:F" | Out-Null
 Write-Host "   公钥已写入并锁定 ACL"
 
-Write-Host "== 5/6 收紧受限代理的 ACL =="
-# 与 scripts\admin-maintenance 同样的道理：承载安全边界的文件不能让普通用户改写。
-$agentDir = Split-Path -Parent $AgentPath
-$acl = Get-Acl $agentDir
+Write-Host "== 5/7 部署受限代理到受保护位置 =="
+# 源码 / 部署副本分离 —— 这是 2026-08-03 踩坑后改的设计。
+#
+# 曾经的做法是直接把仓库里的 satellite\ 目录 ACL 收紧成仅管理员可写，
+# 并让 forced-command 指向仓库内的文件。后果：开发流程被自己锁死 ——
+# 以普通用户身份运行的 Codex 无法再修改该文件，任务静默失败。
+#
+# 正确做法：安全边界加在**部署副本**上，不是加在工作区源文件上。
+#   仓库 satellite\windows-agent.ps1  = 源码，可自由编辑
+#   $DeployedAgent                     = 部署副本，仅管理员可写
+#   forced-command 指向部署副本
+# 攻击者改仓库那份不产生任何效果 —— 除非有人以管理员身份重新运行本脚本。
+if (-not (Test-Path -LiteralPath $DeployDir)) {
+  New-Item -ItemType Directory -Force -Path $DeployDir | Out-Null
+}
+Copy-Item -LiteralPath $AgentPath -Destination $DeployedAgent -Force
+
+$acl = Get-Acl $DeployDir
 $acl.SetAccessRuleProtection($true, $false)
 $acl.Access | ForEach-Object { [void]$acl.RemoveAccessRule($_) }
 $inherit = [Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit'
 foreach ($r in @(@('BUILTIN\Administrators','FullControl'), @('NT AUTHORITY\SYSTEM','FullControl'), @('BUILTIN\Users','ReadAndExecute'))) {
   $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($r[0], $r[1], $inherit, 'None', 'Allow')))
 }
-Set-Acl -Path $agentDir -AclObject $acl
-Write-Host "   $agentDir 现在仅管理员可写"
+Set-Acl -Path $DeployDir -AclObject $acl
+Write-Host "   已部署到 $DeployedAgent（仅管理员可写）"
+Write-Host "   仓库源文件保持可编辑"
 
-Write-Host "== 6/6 防火墙：只放行指定对端 =="
+Write-Host "== 6/7 防火墙：只放行指定对端 =="
 Get-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
 Get-NetFirewallRule -DisplayName 'PAI SSH (Tailscale peers only)' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
 New-NetFirewallRule `
@@ -154,6 +173,20 @@ New-NetFirewallRule `
   -LocalAddress $ListenAddress -RemoteAddress $PeerAddress `
   -Profile Any | Out-Null
 Write-Host "   仅允许 $PeerAddress -> $ListenAddress:22"
+
+Write-Host "== 7/7 启动时序与失败恢复 =="
+# 为什么需要这一步（2026-08-03 实测踩到）：
+# sshd 设为 Automatic 时开机很早就启动，而我们让它只绑 Tailscale 地址
+# ($ListenAddress)。开机那一刻 Tailscale 网卡往往还没就绪，bind 失败 ->
+# 进程以 1067 (ERROR_PROCESS_ABORTED) 退出。默认又没有任何失败恢复动作
+# (RESET_PERIOD=0)，于是服务死了就一直死着，链路静默中断。
+#
+# 两层保护：
+#   1. 延迟启动 —— 让 Tailscale 先起来
+#   2. 失败自动重启 —— 万一延迟仍不够，或运行中崩溃，Windows 会自己拉起
+& sc.exe config sshd start= delayed-auto | Out-Null
+& sc.exe failure sshd reset= 86400 actions= restart/30000/restart/60000/restart/120000 | Out-Null
+Write-Host "   已设为延迟启动 + 失败后 30s/60s/120s 自动重启"
 
 Start-Service sshd
 Write-Host ""

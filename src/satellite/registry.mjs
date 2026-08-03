@@ -1,16 +1,22 @@
-import { macSatelliteHealth } from "./mac.mjs";
 import { resolveNodeId, windowsPeerReachable } from "../brain/supervisor.mjs";
+
+const SSH_HOST_ENV = {
+  windows: "WINDOWS_SSH_HOST",
+  mac: "MAC_SATELLITE_HOST"
+};
 
 export const NODES = {
   windows: {
     id: "windows",
     label: "Windows",
-    capabilities: ["files", "browser", "screen", "canvas", "outlook", "maintenance", "codex", "gui-control"]
+    capabilities: ["files", "browser", "screen", "canvas", "outlook", "maintenance", "codex", "gui-control"],
+    ssh: { host: "", keyEnv: "WINDOWS_SSH_KEY", agentKind: "windows" }
   },
   mac: {
     id: "mac",
     label: "Mac",
-    capabilities: ["files", "canvas", "codex", "gui-control"]
+    capabilities: ["files", "canvas", "codex", "gui-control"],
+    ssh: { host: "", keyEnv: "MAC_SATELLITE_KEY", agentKind: "mac" }
   }
 };
 
@@ -59,9 +65,16 @@ export function nodeRegistry({
     {
       ...node,
       capabilities: [...node.capabilities],
+      ssh: {
+        ...node.ssh,
+        host: String(env[SSH_HOST_ENV[nodeId]] || "").trim()
+      },
       local: nodeId === currentBrainId,
       brain: nodeId === currentBrainId,
-      dispatchable: nodeId === currentBrainId || currentBrainId === "windows"
+      dispatchable: nodeId === currentBrainId || Boolean(
+        String(env[SSH_HOST_ENV[nodeId]] || "").trim() &&
+        String(env[node.ssh.keyEnv] || "").trim()
+      )
     }
   ]));
 }
@@ -75,10 +88,14 @@ export function nodesFor(capability, options = {}) {
 
 async function defaultProbe(nodeId, { selfId, env, platform }) {
   if (selfId === "windows" && nodeId === "mac") {
+    const { macSatelliteHealth } = await import("./mac.mjs");
     return macSatelliteHealth({ env });
   }
   if (selfId === "mac" && nodeId === "windows") {
-    return windowsPeerReachable({ env, platform });
+    const peer = windowsPeerReachable({ env, platform });
+    if (!peer.online) return peer;
+    const { windowsSatelliteHealth } = await import("./dispatch.mjs");
+    return windowsSatelliteHealth({ env, platform });
   }
   return { online: false };
 }
@@ -115,6 +132,7 @@ export async function pickNode(capability, options = {}) {
   const probes = options.probes || (options.probe
     ? Object.fromEntries(Object.keys(NODES).map((nodeId) => [nodeId, () => options.probe(nodeId)]))
     : undefined);
+  const registry = nodeRegistry({ selfId, env, platform });
   const candidates = nodesFor(capability, { selfId });
   if (candidates.length === 0) {
     return { nodeId: null, brainNodeId: selfId, reason: `没有节点声明 ${capability} 能力` };
@@ -122,15 +140,17 @@ export async function pickNode(capability, options = {}) {
 
   const unavailable = [];
   for (const nodeId of candidates) {
+    if (nodeId !== selfId && !probes && !registry[nodeId].dispatchable) {
+      const { host, keyEnv } = registry[nodeId].ssh;
+      const missing = [
+        !host ? SSH_HOST_ENV[nodeId] : "",
+        !String(env[keyEnv] || "").trim() ? keyEnv : ""
+      ].filter(Boolean);
+      unavailable.push(`${registry[nodeId].label} 缺少 SSH 配置：${missing.join("、")}`);
+      continue;
+    }
     const status = await nodeStatus(nodeId, { selfId, probes, env, platform });
     if (nodeAvailable(status)) {
-      if (selfId === "mac" && nodeId === "windows") {
-        return {
-          nodeId: null,
-          brainNodeId: selfId,
-          reason: "这个功能需要另一台电脑；它当前在线，但 Mac 无法向 Windows 下发任务（Windows 没有 SSH 服务端）"
-        };
-      }
       return {
         nodeId,
         brainNodeId: selfId,
@@ -138,7 +158,7 @@ export async function pickNode(capability, options = {}) {
       };
     }
     if (selfId === "mac" && nodeId === "windows") {
-      unavailable.push("这个功能需要另一台电脑，它当前离线");
+      unavailable.push(`Windows 不可达或受限代理未响应，无法使用 ${capability} 能力`);
     } else {
       unavailable.push(`${nodeLabel(nodeId, selfId)}不可用`);
     }

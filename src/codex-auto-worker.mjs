@@ -11,8 +11,9 @@ import {
   listUpcomingAssignments
 } from "./canvas/api.mjs";
 import { sendCanvasUnauthorizedAlert } from "./canvas/token-alert.mjs";
+import { dispatchToNode as dispatchToNodeDefault } from "./satellite/dispatch.mjs";
 import { dispatchToMac } from "./satellite/mac.mjs";
-import { pickNode } from "./satellite/registry.mjs";
+import { pickNode, resolveBrainNodeId } from "./satellite/registry.mjs";
 import { appendAudit } from "./security/audit.mjs";
 import { createApproval } from "./security/pending.mjs";
 import {
@@ -121,18 +122,40 @@ function nodeCapabilityFor(task, route) {
 }
 
 function unavailableNodeMessage(capability, reason) {
-  if (capability === "gui-control") {
-    return "这个任务需要图形界面操控，但 Mac 卫星当前离线（可能休眠），这台电脑也暂时不可用。请唤醒 Mac 或稍后再试。";
-  }
   const labels = {
     browser: "浏览器",
     canvas: "Canvas",
     codex: "Codex",
+    "gui-control": "图形界面操控",
     maintenance: "系统维护",
     outlook: "Outlook",
     screen: "屏幕查看"
   };
-  return `这个任务需要${labels[capability] || capability}能力，但当前没有可用节点。${reason || "请稍后再试。"}`;
+  const detail = reason || "目标机器不可达或没有声明这项能力。";
+  const remoteWindowsOffline = /Windows.*(?:不可达|离线)/.test(detail);
+  return [
+    `这个任务需要${labels[capability] || capability}能力，但当前没有可用节点。`,
+    remoteWindowsOffline ? "这个功能需要另一台电脑，它当前离线。" : "",
+    detail,
+    /[。！？.!?]$/.test(detail) ? "" : "。",
+    "请确认对应机器已开机、Tailscale 与受限 SSH 代理在线，并检查该节点的 SSH 主机和密钥环境变量。"
+  ].join("");
+}
+
+function remoteTaskKind(nodeId, capability, nodeCapability, isApprovedPrivileged) {
+  if (nodeId === "mac") {
+    return capability === "gui-control" && isApprovedPrivileged
+      ? "mac-computer-use"
+      : "mac-general";
+  }
+  if (capability === "browse") return "browse";
+  return nodeCapability;
+}
+
+function remoteFailureMessage(nodeId, capability, error, detail) {
+  const label = nodeId === "windows" ? "Windows" : nodeId === "mac" ? "Mac" : nodeId;
+  const reason = [error, detail].filter(Boolean).join("：") || "未提供失败原因";
+  return `${label} 节点已被选中，但 ${capability} 任务派发失败（${reason}）。请确认该机器在线、受限代理可用且已开放对应 kind；不会在缺少能力的本机静默降级。`;
 }
 
 export function takeScreenshot(root = projectRoot(), spawnSyncImpl = spawnSync) {
@@ -709,6 +732,7 @@ function runCodexExec({ root, prompt, taskStem, onProgress }) {
 export async function processCodexAutoQueue({
   notify = true,
   appendAudit: appendAuditImpl = appendAudit,
+  dispatchToNode: dispatchNode,
   dispatchToMac: dispatchMac = dispatchToMac,
   pickNode: selectNode = pickNode,
   nodeProbe,
@@ -873,6 +897,7 @@ export async function processCodexAutoQueue({
           const selection = routedPrompt.forcedNodeId
             ? { nodeId: routedPrompt.forcedNodeId, reason: "/mac 调试强制指定" }
             : await selectNode(nodeCapability, nodeProbe ? { probe: nodeProbe } : {});
+          const selfId = selection.brainNodeId || resolveBrainNodeId();
 
           if (!selection.nodeId) {
             execution = {
@@ -888,24 +913,47 @@ export async function processCodexAutoQueue({
                 approvalId: task.metadata?.approvalId
               });
             }
-          } else if (selection.nodeId === "mac" && selection.brainNodeId !== "mac") {
-            const macResult = await dispatchMac({
+          } else if (selection.nodeId !== selfId) {
+            const remoteTask = {
               prompt: executionTask.prompt,
-              kind: capability === "gui-control" && isApprovedPrivileged
-                ? "mac-computer-use"
-                : "mac-general"
-            });
-            if (!macResult.ok) {
-              throw new Error(`Mac 卫星执行失败：${macResult.error || "未提供失败原因"}`);
+              kind: remoteTaskKind(selection.nodeId, capability, nodeCapability, isApprovedPrivileged),
+              capability: nodeCapability
+            };
+            let remoteResult;
+            try {
+              remoteResult = dispatchNode
+                ? await dispatchNode(selection.nodeId, remoteTask)
+                : selection.nodeId === "mac"
+                  ? await dispatchMac({
+                      prompt: remoteTask.prompt,
+                      kind: remoteTask.kind
+                    })
+                  : await dispatchToNodeDefault(selection.nodeId, remoteTask);
+            } catch (error) {
+              remoteResult = {
+                ok: false,
+                error: "unreachable",
+                detail: oneLine(error.message || String(error))
+              };
             }
-            execution = { result: macResult.result || "任务已完成。" };
+
+            execution = remoteResult.ok
+              ? { result: remoteResult.result || "任务已完成。" }
+              : {
+                  result: remoteFailureMessage(
+                    selection.nodeId,
+                    nodeCapability,
+                    remoteResult.error,
+                    remoteResult.detail
+                  )
+                };
             if (classification) {
               appendAudit({
                 kind: capability,
                 tier: classification.tier,
-                reason: classification.reason,
+                reason: remoteResult.ok ? classification.reason : execution.result,
                 promptPreview: executionTask.prompt,
-                result: "executed",
+                result: remoteResult.ok ? "executed" : "node-unavailable",
                 approvalId: task.metadata?.approvalId
               });
             }

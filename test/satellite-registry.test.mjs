@@ -85,7 +85,11 @@ test("pickNode never lets an injected probe mark self offline", async () => {
 });
 
 test("Mac brain registry marks itself local and keeps Windows-only capabilities off Mac", () => {
-  const registry = nodeRegistry({ brainNodeId: "mac" });
+  const env = {
+    WINDOWS_SSH_HOST: "tester@100.64.0.20",
+    WINDOWS_SSH_KEY: "~/.ssh/pai_windows"
+  };
+  const registry = nodeRegistry({ brainNodeId: "mac", env });
 
   assert.deepEqual(registry.windows.capabilities, [
     "files", "browser", "screen", "canvas", "outlook", "maintenance", "codex", "gui-control"
@@ -94,7 +98,17 @@ test("Mac brain registry marks itself local and keeps Windows-only capabilities 
   assert.equal(registry.mac.brain, true);
   assert.equal(registry.mac.local, true);
   assert.equal(registry.windows.brain, false);
-  assert.equal(registry.windows.dispatchable, false);
+  assert.equal(registry.windows.dispatchable, true);
+  assert.deepEqual(registry.windows.ssh, {
+    host: env.WINDOWS_SSH_HOST,
+    keyEnv: "WINDOWS_SSH_KEY",
+    agentKind: "windows"
+  });
+  assert.deepEqual(registry.mac.ssh, {
+    host: "",
+    keyEnv: "MAC_SATELLITE_KEY",
+    agentKind: "mac"
+  });
   assert.deepEqual(nodesFor("outlook", { brainNodeId: "mac" }), ["windows"]);
   assert.deepEqual(nodesFor("maintenance", { brainNodeId: "mac" }), ["windows"]);
   assert.deepEqual(nodesFor("browser", { brainNodeId: "mac" }), ["windows"]);
@@ -102,18 +116,18 @@ test("Mac brain registry marks itself local and keeps Windows-only capabilities 
   assert.deepEqual(nodesFor("codex", { brainNodeId: "mac" }), ["mac", "windows"]);
 });
 
-test("Mac brain honestly reports an offline or unreachable Windows-only capability", async () => {
+test("Mac brain reports an offline Windows node and selects it once reachable", async () => {
   const offline = await pickNode("outlook", {
     brainNodeId: "mac",
     probe: async () => false
   });
   assert.equal(offline.nodeId, null);
-  assert.match(offline.reason, /这个功能需要另一台电脑，它当前离线/);
+  assert.match(offline.reason, /Windows 不可达或受限代理未响应/);
 
-  const onlineWithoutRoute = await pickNode("screen", {
+  const online = await pickNode("screen", {
     brainNodeId: "mac",
     probe: async () => true
   });
-  assert.equal(onlineWithoutRoute.nodeId, null);
-  assert.match(onlineWithoutRoute.reason, /Windows 没有 SSH 服务端/);
+  assert.equal(online.nodeId, "windows");
+  assert.match(online.reason, /Windows在线且具备 screen 能力/);
 });
