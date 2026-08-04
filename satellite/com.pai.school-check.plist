@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.pai.school-check</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>/Users/__PAI_USER__/pai-brain/satellite/run-school-check.sh</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- gog 由 brew 装在 /opt/homebrew/bin；launchd 不继承登录 shell 的 PATH。 -->
+    <key>PATH</key>
+    <string>/Users/__PAI_USER__/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>WorkingDirectory</key>
+  <string>/Users/__PAI_USER__/pai-brain</string>
+  <key>LimitLoadToSessionType</key>
+  <string>Aqua</string>
+  <!-- 与 Windows 的计划任务同频：每 5 分钟一次。不设 KeepAlive ——
+       这是跑完就退的一次性任务，不是常驻进程。 -->
+  <key>StartInterval</key>
+  <integer>300</integer>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>StandardOutPath</key>
+  <string>/Users/__PAI_USER__/pai-brain/data/logs/school-check.launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/__PAI_USER__/pai-brain/data/logs/school-check.launchd.err.log</string>
+</dict>
+</plist>

@@ -1,0 +1,4 @@
+# Mac 侧的 shell 脚本经 tar 从 Windows 检出直接送到 macOS 执行。
+# 若被检出成 CRLF，`#!/bin/sh\r` 会让 macOS 报 bad interpreter。
+# 本机 core.autocrlf=input 恰好安全，但换台机器 clone 就未必 —— 在此钉死。
+*.sh text eol=lf

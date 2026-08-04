@@ -169,6 +169,7 @@ export async function runSchoolCheckCli() {
   const shouldExport = forceSchool || slots.length > 0 || Boolean(activeSchoolCatchup);
   const throttleOutlook = !forceSchool && outlookExportThrottled(state.lastOutlookExportAt, now.getTime(), outlookMinMinutes);
   let exportOutput = "";
+  let schoolExportError = "";
   let telegramMessagesSent = 0;
   let emptyCheckSent = false;
   let digestSchoolMessages = [];
@@ -177,10 +178,20 @@ export async function runSchoolCheckCli() {
   let digestSkippedLowPriority = 0;
   let digestSendReason = "empty-content";
 
+  // 与下面 Gmail 那段对齐：单个导出器失败不该把整次检查带走。
+  // 原先这里没有包裹，于是 Outlook 一抛异常，Gmail、Canvas、游戏资讯全都收不到。
+  // Mac 上必然触发（Outlook 走 COM，没有 powershell.exe），Windows 上则会在
+  // Outlook COM 打嗝时触发 —— 那是有前科的。
   if (shouldExport && !checkOnly && !throttleOutlook) {
-    exportOutput = runOutlookExport({ days: exportDays, maxMessages: exportMaxMessages, syncWaitSeconds: outlookSyncWaitSeconds });
-    state.lastOutlookExportAt = now.toISOString();
-    console.log(exportOutput);
+    try {
+      exportOutput = runOutlookExport({ days: exportDays, maxMessages: exportMaxMessages, syncWaitSeconds: outlookSyncWaitSeconds });
+      // 只有真导出成功才记时间戳，否则失败会被当成"刚导过"而触发节流。
+      state.lastOutlookExportAt = now.toISOString();
+      console.log(exportOutput);
+    } catch (error) {
+      schoolExportError = error.message || String(error);
+      console.warn(`Outlook export skipped: ${schoolExportError}`);
+    }
   }
 
   const messages = schoolMessagesFromDrops(maxFiles);
@@ -408,6 +419,7 @@ export async function runSchoolCheckCli() {
     remindersSent: dueSoon.length,
     personalMessages: personalMessages.length,
     personalUpdatesSent,
+    schoolExportError,
     personalExportError,
     gameItems: gameItems.length,
     gameUpdatesSent,
