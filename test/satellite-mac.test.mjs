@@ -6,6 +6,10 @@ import { buildExecutionPrompt, validateTask } from "../satellite/mac-agent.mjs";
 import { dispatchToMac, macSatelliteHealth } from "../src/satellite/mac.mjs";
 
 const ENV = {
+  // 这组用例讲的是"Windows 把活派给 Mac"，所以必须写明自己是 Windows。
+  // 不写的话 selfId 回落到宿主平台：在 Linux CI 上会解析成 mac，
+  // 于是"派给 mac"被判成"派给自己"而拒绝走 SSH。
+  BRAIN_NODE_ID: "windows",
   MAC_SATELLITE_HOST: "tester@100.64.0.10",
   MAC_SATELLITE_KEY: "C:\\keys\\pai_mac"
 };

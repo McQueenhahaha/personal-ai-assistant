@@ -7,7 +7,11 @@ on:
 jobs:
   verify:
     name: Node verify (test + lint + check)
-    runs-on: ubuntu-latest
+    # 这是个 Windows 应用：交互式会话、Outlook COM、卫星 agent 都是 PowerShell，
+    # 测试会真的把它们跑起来。在 Linux 上 spawnSync 找不到 powershell.exe，
+    # status 返回 null —— 红的不是代码，是跑错了平台。
+    # semgrep 那个 job 是纯静态分析，与平台无关，留在 ubuntu。
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
