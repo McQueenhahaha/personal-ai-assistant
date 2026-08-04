@@ -13,6 +13,8 @@ import { classifyTask, TIER } from "./security/policy.mjs";
 import { requestJson } from "./telegram/http.mjs";
 import { fetchUpdates, nextOffset, parseUpdates } from "./telegram/updates.mjs";
 import { readPauseState, writePauseState } from "./state/pause.mjs";
+import { requestCancel } from "./state/cancel.mjs";
+import { readInFlight } from "./state/in-flight.mjs";
 
 const DEFAULT_MESSAGE_FILE = "./.openclaw/state/agents/main/sessions/sessions.json.telegram-messages.json";
 const DEFAULT_STATE_FILE = "./data/state/openclaw-telegram-bridge-state.json";
@@ -369,7 +371,7 @@ async function handleCommand({ token, chatId, text, dryRun }) {
       "/status - 查看助手状态",
       "/web <任务> - 用只读浏览器查看网页",
       "/screen [说明] - 查看当前电脑屏幕",
-      "/mac <任务> - 调试时强制指定 Mac（一般不需要用）",
+      "/mac <任务> - 交给 Mac 执行（微信、Mac 上的应用、Mac 桌面操控）",
       "/codex <任务> - 让 Codex 修改/维护本项目",
       "/study <主题> - 蒸馏课程主题，生成学习文档",
       "/local <任务> - 交给本地 Ollama 队列",
@@ -382,7 +384,8 @@ async function handleCommand({ token, chatId, text, dryRun }) {
       "/due - 查看近期作业 due",
       "/ok <ID> - 批准待确认的特权任务",
       "/no <ID> - 拒绝待确认的特权任务",
-      "/stop - 急停所有自动处理并作废待确认任务",
+      "/cancel - 取消当前正在执行的那一个任务，助手继续运行",
+      "/stop - 急停：中断进行中的任务并暂停一切，直到 /resume",
       "/pause /resume - 暂停/恢复自动处理"
     ].join("\n"), dryRun);
     return true;
@@ -513,6 +516,30 @@ async function handleCommand({ token, chatId, text, dryRun }) {
   if (command === "/pause") {
     writePauseState("pause", projectRoot());
     await send(token, chatId, "⏸ 已暂停自动摘要/检查（不打断进行中的任务）。发 /resume 恢复。", dryRun);
+    return true;
+  }
+
+  if (command === "/cancel") {
+    // 只掐当前这一个任务，助手继续运行 —— /stop 那个锤子会一直停着，
+    // 用它来取消一个跑歪的任务，代价是整个助手静默停摆直到你想起来 /resume
+    //（2026-08-04 就这么停了两小时才被发现）。
+    //
+    // 与 /stop 一样：桥只写状态，绝不自己去杀进程。拥有子进程的是 worker。
+    const inFlight = readInFlight(projectRoot());
+    if (!inFlight?.taskId) {
+      await send(token, chatId, "现在没有正在执行的任务，没什么可取消的。", dryRun);
+      return true;
+    }
+    // 点名取消：worker 只认与正在跑的任务一致的 id，
+    // 免得一条慢半拍的请求掐掉之后一个不相干的任务。
+    requestCancel(inFlight.taskId, projectRoot());
+    const title = String(inFlight.title || inFlight.taskId).slice(0, 80);
+    await send(
+      token,
+      chatId,
+      `✋ 正在取消《${title}》。助手继续运行，不用 /resume。`,
+      dryRun
+    );
     return true;
   }
 

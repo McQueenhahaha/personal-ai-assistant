@@ -28,6 +28,7 @@ import {
 } from "./security/policy.mjs";
 import { redactSensitive } from "./security/redact.mjs";
 import { isPaused, isStopRequested } from "./state/pause.mjs";
+import { clearCancelRequest, isCancelRequestedFor } from "./state/cancel.mjs";
 import { clearInFlight, describeInterrupted, readInFlight, writeInFlight } from "./state/in-flight.mjs";
 import {
   claimTask,
@@ -657,7 +658,7 @@ export async function recoverOrphanedTasks({
   return recovered;
 }
 
-function runCodexExec({ root, prompt, taskStem, onProgress }) {
+function runCodexExec({ root, prompt, taskStem, onProgress, cancelId = "" }) {
   const entrypoint = codexEntrypoint(root);
   if (!fs.existsSync(entrypoint)) {
     throw new Error(`Codex CLI not installed at ${entrypoint}. Run npm install first.`);
@@ -709,13 +710,26 @@ function runCodexExec({ root, prompt, taskStem, onProgress }) {
 
     // 急停轮询。间隔要远小于进度回调(默认 60s) —— 用户按下急停后
     // 还要等一分钟才停下，那不叫急停。
+    // 同一个轮询里顺带看"取消当前这一个"。两者的差别只在善后：
+    // 急停会让助手一直停着(level=stop)，取消只掐这一个、循环继续领下一个。
     const abortTimer = setInterval(() => {
-      if (!isStopRequested(root)) return;
-      clearInterval(abortTimer);
-      killProcessTree(child.pid);
-      const error = new Error("用户急停：已终止正在执行的任务");
-      error.abortedByStop = true;
-      reject(error);
+      if (isStopRequested(root)) {
+        clearInterval(abortTimer);
+        killProcessTree(child.pid);
+        const error = new Error("用户急停：已终止正在执行的任务");
+        error.abortedByStop = true;
+        reject(error);
+        return;
+      }
+      if (cancelId && isCancelRequestedFor(cancelId, root)) {
+        clearInterval(abortTimer);
+        killProcessTree(child.pid);
+        // 立刻消费掉，免得这条请求残留下来把下一个任务也掐了。
+        clearCancelRequest(root);
+        const error = new Error("用户取消：已终止该任务，助手继续运行");
+        error.cancelledByUser = true;
+        reject(error);
+      }
     }, STOP_POLL_MS);
 
     const startedAt = Date.now();
@@ -873,6 +887,7 @@ export async function processCodexAutoQueue({
     for (const item of pending) {
       const claimed = claimTask(item, inboxPath);
       let task;
+      let inFlightId = "";
       const notificationFailures = [];
       let completionNotificationFailed = false;
       const tryNotify = async (phase, action, { completion = false } = {}) => {
@@ -888,8 +903,11 @@ export async function processCodexAutoQueue({
         // 记下"正在做什么"。该记录在灵魂包里，所以对端看得见 ——
         // 本机若死在半路，接管方能据此告诉用户什么被中断了，
         // 而不是让用户停在"任务已开始"之后再无下文。
+        // 这个 id 同时用于两处：告诉对端"正在做什么"，以及 /cancel 点名取消。
+        // 两边必须是同一个值，否则用户在 Telegram 看到的任务和能取消的任务对不上。
+        inFlightId = task.id || path.basename(claimed);
         writeInFlight({
-          taskId: task.id || path.basename(claimed),
+          taskId: inFlightId,
           title: task.title || "",
           taskType: task.taskType || "",
           nodeId: resolveNodeId(),
@@ -1067,6 +1085,7 @@ export async function processCodexAutoQueue({
               root,
               prompt: buildPrompt(executionTask, root),
               taskStem,
+              cancelId: inFlightId,
               onProgress: async ({ elapsedSeconds, jsonLogFile }) => {
                 if (notify && notifyStatusUpdates && !isChat && !isStudy) {
                   await tryNotify("task-progress", () => sendMessage(
