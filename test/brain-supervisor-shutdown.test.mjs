@@ -1,4 +1,6 @@
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ensureBrainServices } from "../src/brain/supervisor.mjs";
@@ -32,9 +34,9 @@ test("supervisor 被终止时必须带走自己拉起的桥", () => {
 
 test("停桥在「本来就没桥」时是安全的空操作", async (t) => {
   // 卫星节点收到 SIGTERM 时也会走这条路，不能因为没有 pid 文件就抛错。
-  const root = fs.mkdtempSync(
-    new URL("../data/tmp-", import.meta.url).pathname.replace(/^\//, "")
-  );
+  // 用系统临时目录，不要用仓库里的 data/ —— 那个目录是 gitignored 的，
+  // 全新检出时不存在，mkdtemp 会直接 ENOENT（CI 上实测炸过）。
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "pai-supervisor-shutdown-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
 
   const result = await ensureBrainServices(false, {
