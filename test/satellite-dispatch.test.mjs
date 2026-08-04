@@ -125,3 +125,27 @@ test("dispatchToNode sends Windows payload only through stdin and parses JSON", 
   });
   assert.equal(fs.existsSync(path.join(process.cwd(), "whoami")), false);
 });
+
+test("探活不得回退到 spawnSync —— 那会冻住桥的事件循环", () => {
+  // /status 会 ssh 探对端，超时 15 秒；Mac 是笔记本、多数时间合着盖。
+  // 用 spawnSync 的话，按一下菜单第一项就是 15~30 秒里桥对任何消息都没反应，
+  // 连急停都按不下去 —— 与 runPowerShell 当初那个洞同形，只是换了条路径。
+  //
+  // 这条守卫盯的是"有人把它改回同步调用"。真实的非阻塞性没法在进程内断言：
+  // 注入一个 async stub 只能证明 stub 是异步的，证明不了生产路径。
+  const source = fs.readFileSync(
+    new URL("../src/satellite/dispatch.mjs", import.meta.url),
+    "utf8"
+  );
+  const start = source.indexOf("export async function satelliteHealth");
+  assert.ok(start > 0, "找不到 satelliteHealth");
+  const end = source.indexOf("\nexport ", start + 1);
+  const body = source.slice(start, end > 0 ? end : undefined);
+
+  assert.equal(
+    /spawnSync/.test(body),
+    false,
+    "satelliteHealth 里出现了 spawnSync —— 探活必须走异步 spawn"
+  );
+  assert.match(body, /probeImpl\(/, "探活必须经由可注入的 probe，测试才走得到生产同一条路");
+});

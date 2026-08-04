@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { nodeRegistry, resolveBrainNodeId } from "./registry.mjs";
 
 const DEFAULT_TIMEOUT_MS = 600000;
@@ -82,6 +82,46 @@ function run(spawnSyncImpl, command, args, timeout, options = {}) {
     windowsHide: true,
     timeout,
     ...options
+  });
+}
+
+/**
+ * 探活专用的异步执行器。
+ *
+ * /status 会去 ssh 探对端，超时 15 秒；Mac 是笔记本、多数时间合着盖，
+ * 于是按一下菜单第一项就是 15~30 秒里桥对任何消息都没反应 ——
+ * 聊天不回、取消不响应，连急停都按不下去。
+ *
+ * 这和 runPowerShell 当初那个洞是同一个（openclaw-telegram-bridge.mjs 里
+ * 那段注释讲的就是它），只是换了条路径没堵上。派发用的 spawnSync 不动：
+ * 那些调用有 scp/stdin 语义，且不在 /status 这种高频交互路径上。
+ */
+function runProbe(command, args, timeoutMs) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const outChunks = [];
+    const errChunks = [];
+    const child = spawn(command, args, { shell: false, windowsHide: true });
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+    const timer = setTimeout(() => {
+      child.kill();
+      finish({ status: null, stdout: "", stderr: "", error: new Error(`探活超时（${timeoutMs}ms）`) });
+    }, timeoutMs);
+
+    child.stdout.on("data", (chunk) => outChunks.push(chunk));
+    child.stderr.on("data", (chunk) => errChunks.push(chunk));
+    child.on("error", (error) => finish({ status: null, stdout: "", stderr: "", error }));
+    child.on("close", (code) => finish({
+      status: code,
+      // 收 Buffer 再解码：按 chunk 拼字符串会把跨界的多字节字符切坏。
+      stdout: Buffer.concat(outChunks).toString("utf8"),
+      stderr: Buffer.concat(errChunks).toString("utf8")
+    }));
   });
 }
 
@@ -314,7 +354,7 @@ export async function dispatchToNode(nodeId, task, dependencies = {}) {
 }
 
 export async function satelliteHealth(nodeId, dependencies = {}) {
-  const spawnSyncImpl = dependencies.spawnSync || spawnSync;
+  const probeImpl = dependencies.probe || runProbe;
   let connection;
   try {
     connection = resolveConnection(nodeId, dependencies);
@@ -324,7 +364,7 @@ export async function satelliteHealth(nodeId, dependencies = {}) {
 
   const args = sshBaseArgs(connection.key);
   if (connection.node.ssh.agentKind === "windows") {
-    const probe = run(spawnSyncImpl, "ssh", [...args, connection.host, "health"], 15000);
+    const probe = await probeImpl("ssh", [...args, connection.host, "health"], 15000);
     if (probe?.error || probe?.status !== 0) {
       return {
         ok: false,
@@ -349,7 +389,7 @@ export async function satelliteHealth(nodeId, dependencies = {}) {
     }
   }
 
-  const probe = run(spawnSyncImpl, "ssh", [...args, connection.host, "true"], 15000);
+  const probe = await probeImpl("ssh", [...args, connection.host, "true"], 15000);
   if (probe?.error || probe?.status !== 0) {
     return {
       ok: false,
@@ -360,8 +400,7 @@ export async function satelliteHealth(nodeId, dependencies = {}) {
     };
   }
 
-  const agent = run(
-    spawnSyncImpl,
+  const agent = await probeImpl(
     "ssh",
     [...args, connection.host, "pgrep", "-f", "pai-satellite/mac-agent.mjs"],
     15000

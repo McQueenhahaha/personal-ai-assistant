@@ -21,6 +21,10 @@ const FINISHED_AT = "2026-08-01T00:00:02.000Z";
 function dependencies(spawnSyncImpl, overrides = {}) {
   return {
     spawnSync: spawnSyncImpl,
+    // 探活改走异步 spawn（否则 /status 会冻住桥的事件循环），注入点也随之分开。
+    // 这些 stub 只按调用序号返回、不看参数，所以同一个函数对两者都适用；
+    // 关键是让健康检查的测试走的就是生产那条路，不再是"生产异步、测试同步"。
+    probe: spawnSyncImpl,
     env: ENV,
     homedir: () => HOME,
     randomUUID: () => ID,
