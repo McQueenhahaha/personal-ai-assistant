@@ -25,3 +25,38 @@ test("classifyTask recognizes forbidden tasks as T3 before T2", () => {
   assert.equal(classifyTask("Please disable Windows Defender").tier, TIER.FORBIDDEN);
   assert.equal(classifyTask("把 D:\\AI 下所有文件删掉").tier, TIER.FORBIDDEN);
 });
+
+test("带链接的提问不该被当成「操作项目目录以外的路径」", () => {
+  // 路径正则里 [a-z]:[\\/] 会命中 "https://" 里的 "s:/" 和 "http://" 里的 "p:/"，
+  // 于是任何带链接的消息都被判 T2、要手打 /ok，理由还是"你操作了项目外的路径"——
+  // 而你根本没提过路径。/web 后面几乎一定跟 URL，这条命令因此等于废掉。
+  assert.equal(
+    classifyTask("看一下 https://example.com/article 这篇文章讲了什么").tier,
+    TIER.READONLY
+  );
+  assert.equal(
+    classifyTask("帮我看看 http://news.ycombinator.com 上有什么新闻").tier,
+    TIER.READONLY
+  );
+  assert.equal(
+    classifyTask("打开 https://rmit.instructure.com 看看有什么作业").tier,
+    TIER.READONLY
+  );
+});
+
+test("放宽之后，真实的项目外路径必须仍然是 T2", () => {
+  // 上面那条是**放宽**安全判定，所以这组护栏必须与它同时存在：
+  // 少了它，下次谁再动这条正则就没人拦得住。
+  for (const text of [
+    "读 D:/notes/a.md",
+    "打开 C:\\Users\\user\\x.txt",
+    "看 d:\\tools 里有什么",
+    "访问 \\\\nas\\share",
+    "读 %APPDATA%\\foo",
+    "看 ~/notes 里的东西",
+    "读 /etc/hosts",
+    "读 ../secrets"
+  ]) {
+    assert.equal(classifyTask(text).tier, TIER.PRIVILEGED, text);
+  }
+});

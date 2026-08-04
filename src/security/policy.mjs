@@ -87,7 +87,13 @@ const PRIVILEGED_RULES = [
     patterns: [
       /项目(?:目录|文件夹)(?:以外|之外)|(?:项目|工程)(?:外部|外面)的?(?:目录|路径|文件)/,
       /\boutside\s+(?:the\s+)?(?:project|workspace)(?:\s+(?:directory|folder))?\b/i,
-      /(?:[a-z]:[\\/]|\\\\[^\\/\s]+[\\/][^\\/\s]+|%(?:USERPROFILE|APPDATA|TEMP)%|\$(?:HOME|USERPROFILE)\b|~[\\/]|\/(?:etc|home|users|var|opt)(?:\/|$)|\.\.[\\/])/i
+      // 盘符那一段前面加了后顾否定 (?<![a-z])：否则 "https://" 里的 "s:/"、
+      // "http://" 里的 "p:/" 都会被当成盘符路径，于是**任何带链接的提问**都被
+      // 判成 T2 特权、要你手打 /ok，理由还是"操作项目目录以外的路径"——
+      // 你根本没提过路径。/web 后面几乎一定跟 URL，这条命令等于废掉了。
+      // 盘符前面永远不是字母（"C:\"、"在 D:/…"、行首），而 URL 里的 s:/ p:/
+      // 前面永远是字母（htt-p、http-s），所以这一个字符组就够，不需要引入 URL 解析。
+      /(?:(?<![a-z])[a-z]:[\\/]|\\\\[^\\/\s]+[\\/][^\\/\s]+|%(?:USERPROFILE|APPDATA|TEMP)%|\$(?:HOME|USERPROFILE)\b|~[\\/]|\/(?:etc|home|users|var|opt)(?:\/|$)|\.\.[\\/])/i
     ]
   },
   {
