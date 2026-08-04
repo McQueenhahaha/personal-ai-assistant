@@ -495,6 +495,35 @@ export async function runSupervisor({ once = false } = {}, dependencies = {}) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  // 退出时必须把自己拉起来的桥一起带走。
+  //
+  // 正常的角色切换不需要这个 —— 变成卫星那条路本来就会调 ensureBrainServices(false)。
+  // 缺的是**被直接终止**的情况：launchctl unload、关机、kill 都是发 SIGTERM，
+  // supervisor 当场死掉，没机会跑下一轮；而它 spawn 桥时调过 child.unref()，
+  // 于是桥活了下来变成孤儿，继续霸占 Telegram 的 getUpdates。
+  // 后果是另一台机器起桥时撞 409 Conflict 并崩溃循环，两边都收不到消息
+  // —— 2026-08-04 实测发生过，排查了很久才找到那个孤儿进程。
+  //
+  // ensureBrainServices(false) 在「本来就没桥」时是安全的空操作，还会顺手
+  // 清掉陈旧的 pid 文件，所以卫星节点收到信号时照调不误。
+  let shuttingDown = false;
+  const shutdown = async (signal) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    try {
+      await ensureBrainServices(false);
+    } catch (error) {
+      console.error(
+        `[${new Date().toISOString()}] ERROR 退出时停止大脑桥失败:`,
+        error.message || String(error)
+      );
+    }
+    process.exit(signal === "SIGINT" ? 130 : 143);
+  };
+  for (const signal of ["SIGTERM", "SIGINT"]) {
+    process.on(signal, () => { void shutdown(signal); });
+  }
+
   runSupervisor({ once: process.argv.includes("--once") }).catch(() => {
     process.exitCode = 1;
   });
