@@ -23,6 +23,9 @@ test("owner Telegram command menu includes key commands", () => {
   assert.equal(commands.has("mac"), true);
   // /cancel 与 /stop 的差别必须两个都在菜单里才显得出来。
   assert.equal(commands.has("cancel"), true);
+  // 待确认提醒给的是 ID，菜单里没有这两项就只能照着手打，打错就作废。
+  assert.equal(commands.has("ok"), true);
+  assert.equal(commands.has("no"), true);
 });
 
 test("菜单里承诺的每条命令，桥里都必须真的有实现", () => {

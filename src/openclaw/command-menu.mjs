@@ -10,6 +10,10 @@ export const OWNER_COMMAND_MENU = [
   { command: "codex", description: "🛠 让电脑端 Codex 改/查本项目（后接任务）" },
   { command: "mac", description: "💻 交给 Mac 执行（微信、Mac 上的应用）" },
   { command: "local", description: "🤖 交给本地模型队列处理（后接任务）" },
+  // 待确认提醒里会给出 ID。没有这两项的话只能照着提醒手打，
+  // 打错一个字符就是"找不到待确认任务"，而 30 分钟 TTL 一直在走。
+  { command: "ok", description: "✅ 批准待确认的特权任务（后接 ID）" },
+  { command: "no", description: "🚫 拒绝待确认的特权任务（后接 ID）" },
   // 描述必须与实际行为一致，不要承诺尚未实现的能力。
   // 三者的差别就在"打不打断正在跑的任务"和"之后停不停"：
   //   pause  不再领新任务，正在跑的照跑完
