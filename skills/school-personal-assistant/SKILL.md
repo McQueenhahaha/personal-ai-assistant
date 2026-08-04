@@ -71,7 +71,7 @@ When reading course-related messages:
 
 ## Personal mail workflow
 
-For personal Gmail, prefer the local `gog` OAuth setup rather than passwords or paid proxy services. After OAuth is configured, export a digest snapshot with `<project-root>\scripts\export-gmail-mail.ps1 -MaxMessages 30`.
+For personal Gmail, prefer the local `gog` OAuth setup rather than passwords or paid proxy services. After OAuth is configured, export a digest snapshot with `node src/school/gmail-export.mjs` from the project root (works on Windows and Mac).
 
 Classify personal messages as:
 

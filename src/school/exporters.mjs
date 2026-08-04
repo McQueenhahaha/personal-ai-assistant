@@ -1,5 +1,6 @@
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { exportGmailSnapshot } from "./gmail-export.mjs";
 
 export function runOutlookExport({ days, maxMessages, syncWaitSeconds }, { spawn = spawnSync } = {}) {
   const script = path.resolve("scripts", "export-outlook-mail.ps1");
@@ -31,29 +32,8 @@ export function runOutlookExport({ days, maxMessages, syncWaitSeconds }, { spawn
   return (result.stdout || "").trim();
 }
 
-export function runGmailExport({ maxMessages, query, account }, { spawn = spawnSync } = {}) {
-  const script = path.resolve("scripts", "export-gmail-mail.ps1");
-  const args = [
-    "-NoProfile",
-    "-ExecutionPolicy",
-    "Bypass",
-    "-File",
-    script,
-    "-MaxMessages",
-    String(maxMessages)
-  ];
-
-  if (query) args.push("-Query", query);
-  if (account) args.push("-Account", account);
-
-  const result = spawn("powershell.exe", args, {
-    cwd: process.cwd(),
-    encoding: "utf8"
-  });
-
-  if (result.status !== 0) {
-    throw new Error((result.stderr || result.stdout || "Gmail export failed").trim());
-  }
-
-  return (result.stdout || "").trim();
+// Gmail 导出已从 PowerShell 搬到 Node（见 ./gmail-export.mjs）：大脑漂到 Mac 时
+// 这件事仍然要做得了。Outlook 那个仍是 PowerShell —— 它走 COM，没法离开 Windows。
+export function runGmailExport({ maxMessages, query, account }, dependencies = {}) {
+  return exportGmailSnapshot({ maxMessages, query, account }, dependencies).message;
 }

@@ -7,7 +7,7 @@
 - `gog.exe`: `D:\AI\gogcli\gog.exe`
 - `gog` 配置目录已重定向到：`D:\AI\personal-ai-assistant\data\appdata\gogcli`
 - OpenClaw 技能：`gog` ready，`gmail-oauth` ready
-- 导出脚本：`D:\AI\personal-ai-assistant\scripts\export-gmail-mail.ps1`
+- 导出脚本：`src/school/gmail-export.mjs`（Node，Windows 与 Mac 通用）
 
 参考：
 
@@ -122,7 +122,14 @@ GOG_ACCOUNT=your@gmail.com
 
 ```powershell
 cd "D:\AI\personal-ai-assistant"
-.\scripts\export-gmail-mail.ps1 -MaxMessages 30
+. .\scripts\openclaw-env.ps1        # 把 D:\AI\gogcli 加进 PATH
+node .\src\school\gmail-export.mjs
+```
+
+Mac 上（gog 由 `brew install gogcli` 提供，已在 PATH 里）：
+
+```bash
+cd ~/pai-brain && node src/school/gmail-export.mjs
 ```
 
 导出文件会进入：

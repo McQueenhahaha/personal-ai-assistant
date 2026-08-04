@@ -30,7 +30,6 @@ These paths are retained for now because the production setup is Windows-first. 
 
 - `scripts/audit-windows.ps1`: `C:\XboxGames`, `C:\Program Files (x86)\Steam\steamapps\common`
 - `scripts/create-desktop-shortcut.ps1`: `D:\AI\Ollama\app.ico`, `C:\Program Files\WindowsApps\...\Codex.exe`
-- `scripts/export-gmail-mail.ps1`: `D:\AI\gogcli`
 - `scripts/install-ollama.ps1`: `D:\AI\Ollama`, `D:\AI\ollama-models`
 - `scripts/openclaw-env.ps1`: `D:\AI\npm-global`, `D:\AI\Ollama`, `D:\AI\ollama-models`, `D:\AI\gogcli`
 - `scripts/pull-local-model.ps1`: `D:\AI\ollama-models`, `D:\AI\Ollama\ollama.exe`
