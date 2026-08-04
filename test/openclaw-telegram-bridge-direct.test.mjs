@@ -120,6 +120,47 @@ test("处理途中崩溃不会让整批消息被 Telegram 重投", async (t) => 
   assert.equal(seenOffsets[1], 42, "第二轮必须从新 offset 拉，否则就是无限重放");
 });
 
+test("长批次处理期间心跳仍在刷新 —— 否则看门狗会杀掉正在干活的桥", async (t) => {
+  const files = makeFiles(t);
+  let calls = 0;
+  let before = null;
+  let during = null;
+
+  await runDirectMode({
+    token: "test-token",
+    chatId: "123",
+    ...files,
+    dryRun: true,
+    processExisting: true,
+    once: true,
+    retrySeconds: 0,
+    failureWarnThreshold: 5,
+    heartbeatMs: 20,
+    logger: quietLogger(),
+    fetchUpdatesImpl: async () => {
+      calls += 1;
+      if (calls > 1) return [];
+      return [{
+        update_id: 41,
+        message: { message_id: 7, date: 1, chat: { id: 123 }, text: "/sfc_scan" }
+      }];
+    },
+    // 模拟一条跑很久的维护命令。真实世界里是 620 秒，两条就越过看门狗的 900 秒。
+    processMessagesImpl: async () => {
+      const read = () => JSON.parse(fs.readFileSync(files.heartbeatFile, "utf8")).atMs;
+      before = read();
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      during = read();
+      return 0;
+    }
+  });
+
+  assert.ok(
+    during > before,
+    `处理期间心跳必须被刷新过（before=${before} during=${during}）`
+  );
+});
+
 test("runDirectMode does not write an offset when the initial baseline fetch is empty", async (t) => {
   const files = makeFiles(t);
 

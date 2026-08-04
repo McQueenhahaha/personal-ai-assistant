@@ -757,6 +757,7 @@ export async function runDirectMode({
   idleLogEvery = 20,
   fetchUpdatesImpl = fetchUpdates,
   processMessagesImpl = processMessageList,
+  heartbeatMs = 60000,
   logger = console
 }) {
   const savedOffset = readUpdateOffset(offsetFile, logger);
@@ -764,6 +765,24 @@ export async function runDirectMode({
   let offset = savedOffset ?? (skipHistorical ? -1 : 0);
   let consecutiveFailures = 0;
   let emptyPolls = 0;
+
+  // 心跳原先只在每轮轮询开始时写一次。一批里若落进两条重命令
+  // （620 秒 × 2 ≈ 1240 秒），就超过看门狗的 900 秒阈值 —— 桥正在正常干活，
+  // 却被判定卡死并强杀。改成独立定时器后，心跳的含义从「轮询转了一圈」
+  // 变成「进程活着且事件循环没被堵死」，这恰好是看门狗真正想测的东西：
+  // 将来别处再出现同步阻塞，它依然会正确开火。
+  //
+  // 不去调大 900 秒阈值 —— 那只会让真正卡死的桥更晚被发现，而且加到第三条
+  // 命令又不够用。前提是 runPowerShell 已经改成 spawn，否则事件循环被堵死时
+  // 任何定时器都不会触发。
+  const heartbeatTimer = setInterval(() => {
+    try {
+      writeJson(heartbeatFile, { atMs: Date.now(), offset, lastUpdates: -1 });
+    } catch (error) {
+      logger.warn?.(`心跳写入失败：${error.message || String(error)}`);
+    }
+  }, heartbeatMs);
+  heartbeatTimer.unref?.();
 
   while (true) {
     let updates;
@@ -835,7 +854,10 @@ export async function runDirectMode({
           logger.log(`直连轮询存活（offset=${offset}）`);
         }
       }
-      if (once) return;
+      if (once) {
+        clearInterval(heartbeatTimer);
+        return;
+      }
     } catch (error) {
       logger.error(`[Telegram 直连轮询异常：${stage}]\n${errorDetails(error)}`);
       await new Promise((resolve) => setTimeout(resolve, retrySeconds * 1000));
