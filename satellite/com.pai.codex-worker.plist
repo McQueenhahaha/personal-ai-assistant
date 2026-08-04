@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.pai.codex-worker</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>/Users/__PAI_USER__/pai-brain/satellite/run-codex-worker.sh</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- codex CLI 在 ~/.local/bin，gog 在 /opt/homebrew/bin；launchd 不继承登录 shell 的 PATH。 -->
+    <key>PATH</key>
+    <string>/Users/__PAI_USER__/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>WorkingDirectory</key>
+  <string>/Users/__PAI_USER__/pai-brain</string>
+  <key>LimitLoadToSessionType</key>
+  <string>Aqua</string>
+  <!-- 这是常驻轮询循环，不是一次性任务：用 KeepAlive 而不是 StartInterval。 -->
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/__PAI_USER__/pai-brain/data/logs/codex-worker.launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/__PAI_USER__/pai-brain/data/logs/codex-worker.launchd.err.log</string>
+</dict>
+</plist>
