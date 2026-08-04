@@ -36,6 +36,31 @@ export const SOUL_FILES = Object.freeze([
   "data/state/brain-lease.json"
 ]);
 
+/**
+ * 灵魂包内容的最薄形状校验。
+ *
+ * 这些文件会**整份覆盖**本地状态，所以"能 JSON.parse"远远不够：
+ *   - offset 为负数或非整数 → 桥要么重放全部历史消息，要么直接起不来
+ *   - pending-approvals 被换掉 → /ok 执行的是 store 里的 prompt，而你在
+ *     Telegram 只看到过发提醒那一刻截的 120 字预览，中间变了你看不出来
+ *   - lease 没有 holder → 归属判定失去依据
+ *
+ * 刻意不引入 schema 框架：只挡住"明显不是这个东西"的情况。
+ * 表里没列的文件按"必须是对象"处理 —— 挡掉 null、数组和裸标量。
+ */
+const SOUL_VALIDATORS = {
+  "data/state/telegram-update-offset.json": (v) => Number.isInteger(v?.offset) && v.offset >= 0,
+  "data/state/brain-lease.json": (v) => typeof v?.holder === "string" && v.holder.length > 0,
+  "data/state/assistant-pause-state.json": (v) => ["none", "pause", "stop"].includes(v?.level),
+  "data/state/chat-history.json": (v) => Array.isArray(v?.turns)
+};
+
+export function isValidSoulContent(relativeFile, value) {
+  const validator = SOUL_VALIDATORS[relativeFile];
+  if (validator) return validator(value);
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
 function scpBaseArgs(key) {
   return [
     "-i",
@@ -166,16 +191,32 @@ export async function pullSoul({ host, key }, dependencies = {}) {
 
     const contents = {};
     const pulledFiles = [];
+    const skipped = [];
     for (const relativeFile of SOUL_FILES) {
       const localFile = path.join(tempDir, path.basename(relativeFile));
       if (!fsImpl.existsSync(localFile)) continue;
       try {
         const text = fsImpl.readFileSync(localFile, "utf8").replace(/^\uFEFF/, "");
-        contents[relativeFile] = JSON.parse(text);
+        const parsed = JSON.parse(text);
+        if (!isValidSoulContent(relativeFile, parsed)) {
+          // 形状不对就不落地 —— 这些文件会**整份覆盖**本地状态，
+          // 一个 offset:-1、或者被掉包的 pending-approvals，影响是实打实的。
+          skipped.push(`${path.basename(relativeFile)}（内容不合法）`);
+          continue;
+        }
+        contents[relativeFile] = parsed;
         pulledFiles.push({ relativeFile, localFile });
-      } catch (error) {
-        throw new Error(`解析远端灵魂包文件 ${path.basename(relativeFile)} 失败：${error.message || String(error)}`);
+      } catch {
+        // 单个文件坏掉不该让整包都落不了地。原先这里 throw，结果一个损坏文件
+        // 就让另外九个正常文件也同步不过来 —— 与桥那个 offset 毒丸同一个毛病。
+        skipped.push(`${path.basename(relativeFile)}（解析失败）`);
       }
+    }
+    if (skipped.length > 0) {
+      // 必须出声：静默跳过等于"看着同步成功、其实少了东西"。
+      (dependencies.logger || console).warn(
+        `灵魂包有 ${skipped.length} 个文件未采纳：${skipped.join("、")}`
+      );
     }
 
     for (const { relativeFile, localFile } of pulledFiles) {

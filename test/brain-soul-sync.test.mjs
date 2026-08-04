@@ -189,3 +189,51 @@ test("pushSoul and pullSoul surface clear scp failures", async (t) => {
     /拉取灵魂包失败：connection refused/
   );
 });
+
+test("灵魂包里单个文件不合法时跳过它，而不是让整包都落不了地", async (t) => {
+  // 原先只要有一个文件 JSON.parse 失败或内容离谱，pullSoul 就整批抛错 ——
+  // 另外九个正常文件也同步不过来。与桥那个 offset 毒丸是同一个毛病。
+  const repoRoot = await tempRepo(t);
+  const localOffset = { offset: 4242 };
+  const offsetFile = path.join(repoRoot, "data", "state", "telegram-update-offset.json");
+  await fsPromises.mkdir(path.dirname(offsetFile), { recursive: true });
+  await fsPromises.writeFile(offsetFile, JSON.stringify(localOffset), "utf8");
+
+  const warnings = [];
+  const goodLease = {
+    holder: "mac",
+    heartbeatAt: "2026-08-01T00:00:00.000Z",
+    ttlSeconds: 90,
+    reason: "renew"
+  };
+
+  const contents = await pullSoul(CONNECTION, {
+    repoRoot,
+    logger: { warn: (message) => warnings.push(message) },
+    spawnSync: (command, args) => {
+      const tempDir = args.at(-1);
+      // 远端这份 offset 是坏的：负数会让桥把全部历史消息重放一遍。
+      fs.writeFileSync(
+        path.join(tempDir, "telegram-update-offset.json"),
+        JSON.stringify({ offset: -1 }),
+        "utf8"
+      );
+      fs.writeFileSync(
+        path.join(tempDir, "brain-lease.json"),
+        JSON.stringify(goodLease),
+        "utf8"
+      );
+      return { status: 0, stdout: "", stderr: "" };
+    }
+  });
+
+  assert.equal(contents["data/state/telegram-update-offset.json"], undefined, "坏文件不该被采纳");
+  assert.deepEqual(contents["data/state/brain-lease.json"], goodLease, "正常文件必须照常落地");
+  assert.deepEqual(
+    JSON.parse(fs.readFileSync(offsetFile, "utf8")),
+    localOffset,
+    "本地 offset 不该被坏数据覆盖"
+  );
+  // 跳过必须出声，否则就是"看着同步成功、其实少了东西"。
+  assert.match(warnings.join(" "), /未采纳/);
+});

@@ -3,6 +3,35 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { projectRoot } from "../env.mjs";
 import { redactSensitive } from "../security/redact.mjs";
+
+/**
+ * 洗掉传给 Claude 子进程的密钥。
+ *
+ * assist/browse 档给的是 --tools ...,Bash 加 --permission-mode dontAsk ——
+ * 一个不问就跑的 shell。而 loadEnv() 把整份 .env 灌进了 process.env，
+ * 子进程默认继承，于是模型连文件都不用读，一条 `env` 就拿到 TELEGRAM_BOT_TOKEN、
+ * CANVAS_API_TOKEN、MAC_SATELLITE_KEY。这比"打印给用户看"更深一层：
+ * 脱敏只挡得住回显，挡不住那个 shell 自己把密钥 curl 出去。
+ *
+ * 用模式而不是硬编码名单：往 .env 里加一个新 token 却忘了同步名单，就是一次
+ * 静默泄漏 —— 而"两处要手工保持一致"正是本仓反复出问题的那类漂移。
+ * 已实测：本机 process.env 里命中 6 个真密钥，PATH/SystemRoot/TEMP/APPDATA 等
+ * 必需变量一个都没误伤。
+ */
+const SECRET_ENV_PATTERN = /(TOKEN|SECRET|PASSWORD|CREDENTIAL|_KEY|APIKEY|PRIVATE)/i;
+
+// 例外：Claude CLI 自己要靠它认证。洗掉的话子进程根本起不来，
+// 而那种失败表现为"模型不回话"，极难定位。
+const SECRET_ENV_KEEP = new Set(["ANTHROPIC_API_KEY"]);
+
+export function scrubSecretEnv(env) {
+  const out = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (SECRET_ENV_PATTERN.test(key) && !SECRET_ENV_KEEP.has(key)) continue;
+    out[key] = value;
+  }
+  return out;
+}
 import { appendTurn, isStale, loadHistory, renderContext, saveHistory } from "./history.mjs";
 
 const ASSIST_SYSTEM_PROMPT = "你在帮用户远程完成任务。可以读文件、搜索、运行只读命令。不要做不可逆操作（删除、发送、付款、改系统设置）；需要这些时，说明原因并建议用户改用 /codex。";
@@ -82,7 +111,7 @@ export async function runClaudeText(prompt, opts = {}) {
     disableBash = false
   } = opts;
   const effectiveTimeoutMs = timeoutMs ?? (capability === "browse" ? 300000 : 120000);
-  let spawnEnv = process.env;
+  let spawnEnv = scrubSecretEnv(process.env);
   const args = [
     "-p",
     "--output-format",
@@ -123,7 +152,7 @@ export async function runClaudeText(prompt, opts = {}) {
         throw new Error(`浏览器配置不可用：${error.message}`);
       }
       spawnEnv = {
-        ...process.env,
+        ...scrubSecretEnv(process.env),
         ASSISTANT_CHROME_PATH: chromePath,
         ASSISTANT_BROWSER_PROFILE: profilePath,
         ASSISTANT_BROWSER_OUTPUT: outputPath

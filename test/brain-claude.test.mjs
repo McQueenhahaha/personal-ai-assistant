@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { runClaudeChat, runClaudeText } from "../src/brain/claude.mjs";
+import { runClaudeChat, runClaudeText, scrubSecretEnv } from "../src/brain/claude.mjs";
 
 /** 造一个冒充 claude CLI 的脚本，让它把给定文本原样吐到 stdout。 */
 function fakeCli(t, stdoutText) {
@@ -52,6 +52,58 @@ test("聊天回复与 chat-history 都必须脱敏", async (t) => {
     false,
     "chat-history 里不应出现明文 token —— 它会被同步到对端机器"
   );
+});
+
+test("子进程拿不到密钥 —— 脱敏挡不住那个 shell 自己把密钥发出去", async (t) => {
+  // assist 档给的是带 Bash 且 --permission-mode dontAsk 的 shell。
+  // 密钥留在环境里的话，模型一条 `env` 就拿到，而且可以直接 curl 出去 ——
+  // 回复脱敏（G5b）只挡得住回显，挡不住这条路。
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "claude-env-"));
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+  const envFile = path.join(tempDir, "child-env.json");
+  const script = path.join(tempDir, "dump-env.mjs");
+  fs.writeFileSync(script, [
+    'import fs from "node:fs";',
+    `fs.writeFileSync(${JSON.stringify(envFile)}, JSON.stringify(process.env));`,
+    'process.stdout.write("ok");'
+  ].join("\n"));
+
+  let cliPath;
+  if (process.platform === "win32") {
+    cliPath = path.join(tempDir, "claude-test.cmd");
+    fs.writeFileSync(cliPath, `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`);
+  } else {
+    cliPath = path.join(tempDir, "claude-test");
+    fs.writeFileSync(cliPath, `#!/bin/sh\nexec "${process.execPath}" "${script}" "$@"\n`);
+    fs.chmodSync(cliPath, 0o755);
+  }
+
+  // 制造前提：CI 上没有 .env，不设的话这条测试会因为"本来就没有"而假绿。
+  const original = process.env.TELEGRAM_BOT_TOKEN;
+  process.env.TELEGRAM_BOT_TOKEN = "8012345678:must-not-reach-the-child";
+  t.after(() => {
+    if (original === undefined) delete process.env.TELEGRAM_BOT_TOKEN;
+    else process.env.TELEGRAM_BOT_TOKEN = original;
+  });
+
+  await runClaudeText("hi", { cliPath, capability: "assist", timeoutMs: 8000 });
+
+  const childEnv = JSON.parse(fs.readFileSync(envFile, "utf8"));
+  assert.equal("TELEGRAM_BOT_TOKEN" in childEnv, false, "密钥不该进子进程环境");
+  assert.ok(childEnv.PATH || childEnv.Path, "PATH 必须保留，否则子进程连命令都找不到");
+});
+
+test("Claude CLI 自己要用的密钥是例外 —— 洗掉它子进程根本起不来", () => {
+  const scrubbed = scrubSecretEnv({
+    PATH: "/usr/bin",
+    TELEGRAM_BOT_TOKEN: "x",
+    CANVAS_API_TOKEN: "x",
+    MAC_SATELLITE_KEY: "x",
+    GOG_KEYRING_PASSWORD: "x",
+    ANTHROPIC_API_KEY: "keep-me"
+  });
+
+  assert.deepEqual(Object.keys(scrubbed).sort(), ["ANTHROPIC_API_KEY", "PATH"]);
 });
 
 test("assist can expose Read without exposing Bash", async (t) => {
