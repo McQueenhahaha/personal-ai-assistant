@@ -124,13 +124,18 @@ test("gog 非零退出时带出 stderr，但翻页提示不算错误", () => {
   const { spawn } = fakeSpawn({
     status: 3,
     stdout: "",
-    stderr: "auth expired for demo@example.com\n# Next page:  --page CAUQ\n"
+    // 两台机器的 gog 版本不同，翻页提示措辞也不同 —— 两种都不算错误。
+    stderr:
+      "auth expired for demo@example.com\n" +
+      "# Next page:  --page CAUQ\n" +
+      "# More results: use --all/--all-pages to fetch every page, or --page 1157\n"
   });
 
   assert.throws(
     () => runGmailExport({ maxMessages: 4, query: "", account: "" }, { spawn }),
     (error) =>
       /auth expired for demo@example\.com/.test(error.message) &&
-      !/Next page/.test(error.message)
+      !/Next page/.test(error.message) &&
+      !/More results/.test(error.message)
   );
 });

@@ -28,7 +28,10 @@ export const DEFAULT_QUERY =
 export const DEFAULT_MAX_MESSAGES = 30;
 
 // gog 把翻页提示写在 stderr，那不是错误，不该当成警告报给用户。
-const NEXT_PAGE_HINT = /^\s*# Next page:\s+--page\s+/;
+// 两种写法都要认：Windows 那台是 gog v0.16.0（"# Next page:"），
+// Mac 是 brew 装的 0.34.2（"# More results:"）。两边版本差 18 个小版本，
+// 但 --plain 的六列格式没变（已实测两边产物列头一致），只有这句提示改了措辞。
+const PAGINATION_HINT = /^\s*#\s*(Next page|More results)\b/;
 
 export function buildGogArgs({ query, maxMessages, account }) {
   const args = [
@@ -99,7 +102,7 @@ export function exportGmailSnapshot(options = {}, dependencies = {}) {
   const output = stdout ? stdout.split(/\r?\n/) : [];
   const warnings = String(result.stderr || "")
     .split(/\r?\n/)
-    .filter((line) => line.trim() && !NEXT_PAGE_HINT.test(line));
+    .filter((line) => line.trim() && !PAGINATION_HINT.test(line));
 
   if (result.status !== 0) {
     throw new Error(`gog Gmail export failed: ${[...warnings, ...output].join("\n").trim()}`);
