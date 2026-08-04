@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { projectRoot } from "../env.mjs";
+import { redactSensitive } from "../security/redact.mjs";
 import { appendTurn, isStale, loadHistory, renderContext, saveHistory } from "./history.mjs";
 
 const ASSIST_SYSTEM_PROMPT = "你在帮用户远程完成任务。可以读文件、搜索、运行只读命令。不要做不可逆操作（删除、发送、付款、改系统设置）；需要这些时，说明原因并建议用户改用 /codex。";
@@ -225,14 +226,18 @@ export async function runClaudeChat(prompt, opts = {}) {
   const context = renderContext(history);
   const userText = String(prompt ?? "");
   const fullPrompt = context ? `${context}\n\n${userText}` : userText;
-  const result = await runClaudeText(fullPrompt, {
+  // 在这里脱敏，一处封住三个出口：Telegram 回复、chat-history 落盘、以及随灵魂包
+  // 同步到对端的那份拷贝。写进 chat-history 的明文尤其难收 —— 对端每次同步前还会
+  // 留一份 state-backup 快照，撤回 Telegram 消息也删不掉它们。
+  // codex 那条出口一直是脱敏的（codex-auto-worker.mjs 的 result），只有聊天这条漏。
+  const result = redactSensitive(await runClaudeText(fullPrompt, {
     cliPath,
     model,
     timeoutMs,
     capability,
     additionalSystemPrompt,
     disableBash
-  });
+  }));
   const withUser = appendTurn(history, { role: "user", text: userText, atMs: nowMs });
   const withAssistant = appendTurn(withUser, { role: "assistant", text: result, atMs: nowMs });
 

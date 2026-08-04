@@ -58,7 +58,11 @@ function readJson(file, fallback) {
 
 function writeJson(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(value, null, 2), "utf8");
+  // 先写临时文件再 rename —— 同卷 rename 是原子的，断电或强杀不会留下半截 JSON。
+  // 直接 writeFileSync 的话，写到一半被杀就会写坏 offset 文件。
+  const tmp = `${file}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(value, null, 2), "utf8");
+  fs.renameSync(tmp, file);
 }
 
 function errorDetails(error) {
@@ -689,11 +693,15 @@ function rememberMessageKeys(messages, stateFile) {
   writeJson(stateFile, state);
 }
 
-function readUpdateOffset(offsetFile) {
+function readUpdateOffset(offsetFile, logger = console) {
   if (!fs.existsSync(offsetFile)) return null;
   const state = readJson(offsetFile, null);
   if (!Number.isInteger(state?.offset) || state.offset < 0) {
-    throw new Error(`Invalid Telegram update offset file: ${offsetFile}`);
+    // 损坏就退化成"没有 offset"，复用既有的"文件不存在"恢复路径：记基线、跳过历史。
+    // 原先这里 throw，而调用点在 while 循环之外 —— main() 直接退出，keepalive
+    // 每 30 秒重启同一个必崩的进程，机器人永久失联，只能人工删文件才救得回来。
+    logger.warn(`Telegram offset 文件不可用，按"无 offset"处理：${offsetFile}`);
+    return null;
   }
   return state.offset;
 }
@@ -713,7 +721,7 @@ export async function runDirectMode({
   fetchUpdatesImpl = fetchUpdates,
   logger = console
 }) {
-  const savedOffset = readUpdateOffset(offsetFile);
+  const savedOffset = readUpdateOffset(offsetFile, logger);
   let skipHistorical = savedOffset == null && !processExisting;
   let offset = savedOffset ?? (skipHistorical ? -1 : 0);
   let consecutiveFailures = 0;

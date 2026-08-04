@@ -54,6 +54,35 @@ test("runDirectMode continues polling after fetchUpdates throws", async (t) => {
   assert.deepEqual(JSON.parse(fs.readFileSync(files.offsetFile, "utf8")), { offset: 42 });
 });
 
+test("offset 文件损坏时桥仍然起得来，而不是被 keepalive 无限重启同一个崩溃", async (t) => {
+  const files = makeFiles(t);
+  // 断电、蓝屏，或看门狗的 Stop-Process -Force 恰好落在那次写入上，
+  // 就会留下这种半截文件。原先 readUpdateOffset 直接 throw，而它在 while 循环之外 ——
+  // main() 退出、keepalive 每 30 秒重启同一个必崩的进程，机器人永久失联，
+  // 只能人工上机删掉这个文件才救得回来。
+  fs.mkdirSync(path.dirname(files.offsetFile), { recursive: true });
+  fs.writeFileSync(files.offsetFile, "{");
+
+  await runDirectMode({
+    token: "test-token",
+    chatId: "123",
+    ...files,
+    dryRun: true,
+    processExisting: false,
+    once: true,
+    retrySeconds: 0,
+    failureWarnThreshold: 5,
+    logger: quietLogger(),
+    fetchUpdatesImpl: async () => [{
+      update_id: 41,
+      message: { message_id: 7, date: 1, chat: { id: 123 }, text: "old" }
+    }]
+  });
+
+  // 起得来，并且把 offset 修回合法值。
+  assert.deepEqual(JSON.parse(fs.readFileSync(files.offsetFile, "utf8")), { offset: 42 });
+});
+
 test("runDirectMode does not write an offset when the initial baseline fetch is empty", async (t) => {
   const files = makeFiles(t);
 
