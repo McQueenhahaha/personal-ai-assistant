@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { createTask, ensureQueue, listPendingTasks } from "./queue.mjs";
 import { envNumber, loadEnv, projectRoot, resolveFromCwd } from "./env.mjs";
@@ -205,25 +205,59 @@ export async function summarizeStatus(dependencies = {}) {
   ].join("\n");
 }
 
-function runPowerShell(script, args = [], timeoutMs = 180000) {
-  const result = spawnSync("powershell.exe", [
-    "-NoProfile",
-    "-ExecutionPolicy",
-    "Bypass",
-    "-File",
-    path.resolve(script),
-    ...args
-  ], {
-    cwd: process.cwd(),
-    encoding: "utf8",
-    timeout: timeoutMs
-  });
+// 用 spawn 而不是 spawnSync：spawnSync 会把事件循环整个冻住。维护类命令最长
+// 620 秒，那段时间机器人对任何消息都没反应 —— /status 不回、聊天不回，
+// **急停 /stop 也读不到**，安全边界在最需要它的时候按不下去。
+//
+// 行为与原来逐条等价：非零退出仍抛错、超时仍杀子进程、stdout 与 stderr 的
+// 合并顺序不变、空输出仍返回「命令已执行。」。这是全仓唯一执行 PowerShell 的
+// 通道，等价性比优雅重要，所以不顺手加并发、队列或取消令牌。
+export function runPowerShell(script, args = [], timeoutMs = 180000) {
+  return new Promise((resolve, reject) => {
+    const child = spawn("powershell.exe", [
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      path.resolve(script),
+      ...args
+    ], { cwd: process.cwd(), windowsHide: true });
 
-  const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
-  if (result.status !== 0) {
-    throw new Error(output || `PowerShell command failed with exit ${result.status}`);
-  }
-  return output || "命令已执行。";
+    // 收 Buffer 再一次性解码：按 chunk 直接拼字符串的话，一个中文字符
+    // 被切在两个 chunk 边界上就会变成乱码。spawnSync 没有这个问题。
+    const outChunks = [];
+    const errChunks = [];
+    let timedOut = false;
+
+    child.stdout.on("data", (chunk) => outChunks.push(chunk));
+    child.stderr.on("data", (chunk) => errChunks.push(chunk));
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill();
+    }, timeoutMs);
+
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      const stdout = Buffer.concat(outChunks).toString("utf8");
+      const stderr = Buffer.concat(errChunks).toString("utf8");
+      const output = [stdout, stderr].filter(Boolean).join("\n").trim();
+      if (timedOut) {
+        reject(new Error(output || `PowerShell command timed out after ${timeoutMs}ms`));
+        return;
+      }
+      if (code !== 0) {
+        reject(new Error(output || `PowerShell command failed with exit ${code}`));
+        return;
+      }
+      resolve(output || "命令已执行。");
+    });
+  });
 }
 
 async function registerOwnerCommandMenu(token, chatId, dryRun) {
@@ -250,7 +284,7 @@ async function dispatchMaintenance({ token, chatId, action, dryRun }) {
   }
 
   await send(token, chatId, `维护任务已派发：${actionToken}，执行中…`, dryRun);
-  const output = runPowerShell(
+  const output = await runPowerShell(
     "./scripts/admin-maintenance/request-admin-maintenance.ps1",
     ["-Action", actionToken, "-TimeoutSeconds", "600"],
     620000
@@ -633,7 +667,7 @@ async function handleCommand({ token, chatId, text, dryRun }) {
   if (commandMap[command]) {
     const [script, args] = commandMap[command];
     await send(token, chatId, `${command} 已收到，正在执行。`, dryRun);
-    const output = runPowerShell(script, args);
+    const output = await runPowerShell(script, args);
     await send(token, chatId, output, dryRun);
     return true;
   }

@@ -100,6 +100,12 @@ test("the bridge never kills processes itself", () => {
   const offenders = source
     .split(/\r?\n/)
     .filter((line) => !line.trim().startsWith("//"))
+    // 唯一例外：runPowerShell 超时时终止**自己 spawn 出来的那个子进程**。
+    // 它持有 handle，不需要按命令行特征去找谁该死 —— 这正是本守卫要求的
+    // "由拥有子进程的一方终止"，不是它要防的那种误杀。
+    // 而且这个行为一直存在：原先走 spawnSync 的 timeout 选项时同样会杀掉它，
+    // 只是隐式发生、正则看不见。写成 spawn 之后才显形。
+    .filter((line) => !/^\s*child\.kill\(\);?$/.test(line))
     .filter((line) => /taskkill|Stop-Process|killProcessTree|\.kill\(/.test(line));
-  assert.deepEqual(offenders, [], "桥内不得出现任何杀进程调用");
+  assert.deepEqual(offenders, [], "桥内不得出现按命令行特征杀进程的调用");
 });
