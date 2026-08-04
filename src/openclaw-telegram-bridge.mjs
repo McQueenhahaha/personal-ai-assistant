@@ -659,6 +659,11 @@ async function processMessageList({ messages, stateFile, token, chatId, dryRun, 
   for (const message of messages) {
     if (seen.has(message.key)) continue;
     seen.add(message.key);
+    // 标记一条落盘一条。整批处理完才写的话，中途被杀后这些消息重启即视为"没见过"，
+    // 已经执行过的命令会再执行一遍 —— 文件模式（processMessages）没有 offset 兜底，
+    // 全靠这里。批量都是个位数，多几次小文件写可以忽略。
+    state.seenKeys = [...seen].slice(-2000);
+    writeJson(stateFile, state);
     if (String(message.chatId) !== String(chatId)) continue;
     try {
       if (await handleCommand({ token, chatId, text: message.text, dryRun })) {
@@ -675,8 +680,6 @@ async function processMessageList({ messages, stateFile, token, chatId, dryRun, 
     }
   }
 
-  state.seenKeys = [...seen].slice(-2000);
-  writeJson(stateFile, state);
   return handled;
 }
 
@@ -719,6 +722,7 @@ export async function runDirectMode({
   failureWarnThreshold,
   idleLogEvery = 20,
   fetchUpdatesImpl = fetchUpdates,
+  processMessagesImpl = processMessageList,
   logger = console
 }) {
   const savedOffset = readUpdateOffset(offsetFile, logger);
@@ -764,8 +768,21 @@ export async function runDirectMode({
           writeJson(offsetFile, { offset });
         }
       } else {
+        // 先落盘 offset，再处理 —— 顺序不能反。
+        // 处理途中进程若被杀（看门狗的 Stop-Process -Force、关机、崩溃），
+        // 原来的顺序会让 offset 停在旧值，Telegram 下一轮把整批原样重投：
+        // 批里若有 /sfc_scan，就是系统扫描从头再跑一遍，而且会一直循环下去。
+        // 用 try/finally 补写没有用 —— Stop-Process -Force 不给 finally 执行的机会。
+        //
+        // 代价是语义从 at-least-once 变成 at-most-once：半途崩溃会丢掉这批里
+        // 尚未处理的消息。对本应用这是正确取舍 —— 丢一条命令，好过无限重跑
+        // sfc/dism 且用户永远等不到结果。
+        stage = "计算 offset";
+        offset = nextOffset(updates, offset);
+        stage = "写入 offset";
+        writeJson(offsetFile, { offset });
         stage = "处理消息";
-        handled = await processMessageList({
+        handled = await processMessagesImpl({
           messages,
           stateFile,
           token,
@@ -773,10 +790,6 @@ export async function runDirectMode({
           dryRun,
           processExisting: true
         });
-        stage = "计算 offset";
-        offset = nextOffset(updates, offset);
-        stage = "写入 offset";
-        writeJson(offsetFile, { offset });
       }
 
       if (updates.length > 0) {

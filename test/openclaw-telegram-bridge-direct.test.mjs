@@ -83,6 +83,43 @@ test("offset 文件损坏时桥仍然起得来，而不是被 keepalive 无限�
   assert.deepEqual(JSON.parse(fs.readFileSync(files.offsetFile, "utf8")), { offset: 42 });
 });
 
+test("处理途中崩溃不会让整批消息被 Telegram 重投", async (t) => {
+  const files = makeFiles(t);
+  const seenOffsets = [];
+  let calls = 0;
+
+  await runDirectMode({
+    token: "test-token",
+    chatId: "123",
+    ...files,
+    dryRun: true,
+    processExisting: true,
+    once: true,
+    retrySeconds: 0,
+    failureWarnThreshold: 5,
+    logger: quietLogger(),
+    fetchUpdatesImpl: async ({ offset }) => {
+      seenOffsets.push(offset);
+      calls += 1;
+      if (calls > 1) return [];
+      return [{
+        update_id: 41,
+        message: { message_id: 7, date: 1, chat: { id: 123 }, text: "/sfc_scan" }
+      }];
+    },
+    // 模拟看门狗的 Stop-Process -Force：处理途中整个进程没了。
+    // 只炸第一轮 —— 第二轮要能正常收尾，否则 once 永远等不到 return。
+    processMessagesImpl: async () => {
+      if (calls === 1) throw new Error("桥在处理途中被杀");
+      return 0;
+    }
+  });
+
+  // 崩溃发生在 offset 落盘之后，所以下一轮从 42 继续，而不是把 /sfc_scan 再投一遍。
+  assert.deepEqual(JSON.parse(fs.readFileSync(files.offsetFile, "utf8")), { offset: 42 });
+  assert.equal(seenOffsets[1], 42, "第二轮必须从新 offset 拉，否则就是无限重放");
+});
+
 test("runDirectMode does not write an offset when the initial baseline fetch is empty", async (t) => {
   const files = makeFiles(t);
 
