@@ -49,11 +49,16 @@ function runAgent(agent, command, input = "") {
   );
 }
 
+// 下面两条要真的把 windows-agent.ps1 跑起来，而它是 PowerShell 脚本。
+// CI 跑在 ubuntu-latest 上没有 powershell.exe：spawnSync 拿不到 stdout，
+// JSON.parse(undefined) 直接抛 —— 那不是被测代码有问题，是这条测试在那里没有可执行性。
+const windowsOnly = { skip: process.platform !== "win32" && "需要 Windows PowerShell" };
+
 test("windows-agent.ps1 remains UTF-8 with BOM", () => {
   assert.deepEqual([...fs.readFileSync(AGENT).subarray(0, 3)], [0xef, 0xbb, 0xbf]);
 });
 
-test("Windows agent rejects every SSH_ORIGINAL_COMMAND except exact health/run literals", (t) => {
+test("Windows agent rejects every SSH_ORIGINAL_COMMAND except exact health/run literals", windowsOnly, (t) => {
   const agent = agentFixture(t);
   for (const command of ["", "Health", "RUN", " health", "health ", "whoami", "health; whoami", "run && whoami"] ) {
     const result = runAgent(agent, command);
@@ -67,7 +72,7 @@ test("Windows agent rejects every SSH_ORIGINAL_COMMAND except exact health/run l
   }
 });
 
-test("Windows agent reports bad-payload for invalid run stdin", (t) => {
+test("Windows agent reports bad-payload for invalid run stdin", windowsOnly, (t) => {
   const result = runAgent(agentFixture(t), "run", "not-json");
   assert.notEqual(result.status, 0);
   const response = JSON.parse(result.stdout);
