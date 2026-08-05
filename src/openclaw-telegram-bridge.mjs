@@ -8,7 +8,7 @@ import { OWNER_COMMAND_MENU } from "./openclaw/command-menu.mjs";
 import { resolveNodeId } from "./brain/supervisor.mjs";
 import { nodeRegistry, nodeStatus } from "./satellite/registry.mjs";
 import { appendAudit } from "./security/audit.mjs";
-import { isExpired, loadApprovals, resolveApproval, saveApprovals } from "./security/pending.mjs";
+import { isExpired, loadApprovals, resolveApproval, saveApprovals, withApprovalsLock } from "./security/pending.mjs";
 import { classifyTask, TIER } from "./security/policy.mjs";
 import { requestJsonWithRetry } from "./telegram/http.mjs";
 import { fetchUpdates, nextOffset, parseUpdates } from "./telegram/updates.mjs";
@@ -551,6 +551,10 @@ async function handleCommand({ token, chatId, text, dryRun }) {
     // 自己、supervisor、看门狗、game-mode watcher，按命令行特征杀早晚误杀。
     // 拥有子进程的是 worker，所以由 worker 动手。
     writePauseState("stop", projectRoot());
+    // 整段读改写必须串起来：worker 每 20 秒独立起一次，它那份还标着 pending 的
+    // 旧快照如果在这中间写回去，刚被作废的待确认就又活了 —— 随后一个 /ok
+    // 就能把你以为已经掐掉的特权任务放出去。
+    const deniedCount = withApprovalsLock(() => {
     const approvals = loadApprovals();
     let deniedCount = 0;
     for (const [id, entry] of Object.entries(approvals)) {
@@ -567,6 +571,8 @@ async function handleCommand({ token, chatId, text, dryRun }) {
       });
     }
     saveApprovals(approvals);
+    return deniedCount;
+    });
     await send(
       token,
       chatId,
