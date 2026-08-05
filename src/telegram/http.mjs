@@ -20,6 +20,43 @@ function responseSnippet(body) {
   return body.slice(0, ERROR_BODY_LIMIT);
 }
 
+/**
+ * 带重试的发送。
+ *
+ * 没有它的时候，一次网络抖动或 429 限流就把那条回复**永久**丢掉：命令其实
+ * 执行了（/sfc_scan 真跑了、Codex 真改了代码），只是结果永远不会来。而且
+ * offset 现在是先落盘再处理（at-most-once），Telegram 不会重投，等也没用。
+ * 桥这边更狠 —— send 抛出后连"命令执行失败"那条回执本身也发不出去，
+ * 最后只在本机日志里留一行。
+ *
+ * 429 是真实存在的形状：/study 的结果按 3500 字分片连发、/digest 长文分片，
+ * 都会在一两秒内连打好几条 sendMessage。
+ *
+ * **刻意不塞进 requestJson 本身**：fetchUpdates 也用它，而拉取那条链路已经有
+ * consecutiveFailures 计数和告警阈值，双层重试会把阈值语义搅乱。
+ *
+ * 不解析 429 的 retry_after：单聊天机器人的 retry_after 通常 1~3 秒，
+ * 1s/2s 两次退避已经覆盖，为它加解析属于投机设计。
+ */
+export async function requestJsonWithRetry(url, options = {}, {
+  attempts = 3,
+  delayMs = 1000,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+} = {}) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await requestJson(url, options);
+    } catch (error) {
+      lastError = error;
+      // 最后一次失败就把原错误原样抛出去，不要包一层 —— 上层还要靠它的文字判断。
+      if (attempt === attempts) break;
+      await sleep(delayMs * attempt);
+    }
+  }
+  throw lastError;
+}
+
 export async function requestJson(url, {
   method = "GET",
   body,

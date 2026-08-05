@@ -10,7 +10,7 @@ import { nodeRegistry, nodeStatus } from "./satellite/registry.mjs";
 import { appendAudit } from "./security/audit.mjs";
 import { isExpired, loadApprovals, resolveApproval, saveApprovals } from "./security/pending.mjs";
 import { classifyTask, TIER } from "./security/policy.mjs";
-import { requestJson } from "./telegram/http.mjs";
+import { requestJsonWithRetry } from "./telegram/http.mjs";
 import { fetchUpdates, nextOffset, parseUpdates } from "./telegram/updates.mjs";
 import { readPauseState, writePauseState } from "./state/pause.mjs";
 import { requestCancel } from "./state/cancel.mjs";
@@ -105,7 +105,9 @@ function commandParts(text) {
 }
 
 async function telegramApi(token, method, body) {
-  const json = await requestJson(`https://api.telegram.org/bot${token}/${method}`, {
+  // 发送走重试：一次抖动就把回复永久丢掉，而 offset 已落盘、Telegram 不重投。
+  // 拉取那条（fetchUpdates）刻意不加 —— 它有自己的 consecutiveFailures 与告警阈值。
+  const json = await requestJsonWithRetry(`https://api.telegram.org/bot${token}/${method}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body

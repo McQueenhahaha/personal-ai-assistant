@@ -471,8 +471,19 @@ function readLogTail(file, maxBytes = 512 * 1024) {
   return buffer.toString("utf8");
 }
 
-function createRedactingLogWriter(file) {
+export function createRedactingLogWriter(file) {
   const stream = fs.createWriteStream(file, { flags: "a", encoding: "utf8" });
+
+  // 没有这个监听器的话，写日志失败会以 unhandled 'error' 直接打死整个 worker 进程：
+  // 你收到的是「任务被中断（进程终止）」，codex 改了一半的文件留在那儿，
+  // 而它那个 danger-full-access 子进程没人 kill，成了孤儿继续在仓库里写。
+  //
+  // 只记不抛，也不重试、不换路径 —— 日志坏了不该影响任务成败，
+  // 这是本仓已有的原则（tryNotify 也是这么处理通知失败的）。
+  stream.on("error", (error) => {
+    console.error(`[codex-auto-worker] 任务日志写入失败，本次日志不完整：${error.message || String(error)}`);
+  });
+
   let pending = "";
 
   return {

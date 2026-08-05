@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { requestJson } from "./telegram/http.mjs";
+import { requestJsonWithRetry } from "./telegram/http.mjs";
 
 const TELEGRAM_LIMIT = 3900;
 
@@ -33,7 +33,7 @@ export async function sendTelegramMessage(text) {
 
   const url = `https://api.telegram.org/bot${token}/sendMessage`;
   for (const chunk of splitMessage(text)) {
-    const response = await requestJson(url, {
+    const response = await requestJsonWithRetry(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -77,7 +77,7 @@ export async function sendTelegramDocument(filePath, caption = "") {
   parts.push(fs.readFileSync(filePath));
   parts.push(Buffer.from(`\r\n--${boundary}--\r\n`));
 
-  const response = await requestJson(`https://api.telegram.org/bot${token}/sendDocument`, {
+  const response = await requestJsonWithRetry(`https://api.telegram.org/bot${token}/sendDocument`, {
     method: "POST",
     headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` },
     body: Buffer.concat(parts)
