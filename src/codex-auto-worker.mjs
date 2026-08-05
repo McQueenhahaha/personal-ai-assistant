@@ -172,6 +172,21 @@ function remoteTaskKind(nodeId, capability, nodeCapability, isApprovedPrivileged
   return nodeCapability;
 }
 
+/**
+ * 回执开头的来源标签：`[Windows · codex]`。
+ *
+ * 没有它的时候，两台机器给出的回答长得一模一样 —— 出问题时你无从判断该去
+ * 哪台机器看日志。今天排查那个孤儿桥就吃过这个亏：回你消息的一直是 Mac
+ * 上的桥，而从消息本身完全看不出来。
+ *
+ * 刻意不做：不加配置开关、不做富格式、不动 /codex 与 /study 那两条通知
+ *（它们的标题里已经带了任务名）。
+ */
+export function sourceLabel(nodeId, capability) {
+  const machine = nodeId === "mac" ? "Mac" : nodeId === "windows" ? "Windows" : String(nodeId || "本机");
+  return `[${machine} · ${capability || "codex"}]`;
+}
+
 function remoteFailureMessage(nodeId, capability, error, detail) {
   const label = nodeId === "windows" ? "Windows" : nodeId === "mac" ? "Mac" : nodeId;
   const reason = [error, detail].filter(Boolean).join("：") || "未提供失败原因";
@@ -976,6 +991,10 @@ export async function processCodexAutoQueue({
         }
         const notifyStatusUpdates = boolEnv("CODEX_AUTO_STATUS_UPDATES", true);
         const taskStem = path.basename(claimed).replace(/\.[^.]+$/, "");
+        // 回执里要看得出这条是哪台机器跑的。默认是本机；派发出去时改成目标节点。
+        // 没有这个信息的时候，两台机器给的回答长得一模一样 —— 出问题时你无从
+        // 判断该去哪台机器看日志，今天排查孤儿桥就吃过这个亏。
+        let ranOnNodeId = resolveNodeId();
         let execution;
         if (classification?.tier === TIER.FORBIDDEN) {
           appendAudit({
@@ -1063,6 +1082,7 @@ export async function processCodexAutoQueue({
               };
             }
 
+            if (remoteResult.ok) ranOnNodeId = selection.nodeId;
             execution = remoteResult.ok
               ? { result: remoteResult.result || "任务已完成。" }
               : {
@@ -1158,7 +1178,9 @@ export async function processCodexAutoQueue({
         } else if (notify && isChat) {
           await tryNotify(
             "chat-result",
-            () => sendMessage(execution.notification || execution.result),
+            () => sendMessage(
+              `${sourceLabel(ranOnNodeId, capability)}\n${execution.notification || execution.result}`
+            ),
             { completion: true }
           );
         } else if (notify) {

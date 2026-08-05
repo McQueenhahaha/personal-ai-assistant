@@ -142,6 +142,11 @@ export async function runSchoolCheckCli() {
   state.lastOutlookExportAt ||= null;
   state.gmailFailStreak ||= 0;
   state.lastGmailAuthAlertAt ||= null;
+  // Outlook 一直没有告警：它失败只写 schoolExportError 并 console.warn，
+  // 之后再没人读它 —— 学校邮件可以连着几天读不出来而你完全不知道，
+  // 唯一的迹象是"最近怎么没学校邮件"，而那恰好和"确实没有新邮件"长得一样。
+  state.outlookFailStreak ||= 0;
+  state.lastOutlookAlertAt ||= null;
   state.lastDigestKey ||= null;
   state.lastDigestSentAt ||= null;
 
@@ -191,6 +196,25 @@ export async function runSchoolCheckCli() {
     } catch (error) {
       schoolExportError = error.message || String(error);
       console.warn(`Outlook export skipped: ${schoolExportError}`);
+    }
+
+    // 连续失败才告警，且有冷却 —— 直接复用 Gmail 那套判定（它的三个参数
+    // streak / lastAlertIso / nowMs 本来就是通用的，不必另写一份逻辑）。
+    if (schoolExportError) {
+      state.outlookFailStreak += 1;
+    } else {
+      state.outlookFailStreak = 0;
+    }
+    if (schoolExportError && shouldAlertGmailFailure(state.outlookFailStreak, state.lastOutlookAlertAt, now.getTime())) {
+      await sendOrPrint(
+        `⚠️ Outlook 学校邮件读取连续失败，已经 ${state.outlookFailStreak} 次。\n`
+        + "Outlook 走的是本机 COM，常见原因是 Outlook 没开、或它卡在登录/同步。\n"
+        + "先去电脑上打开 Outlook 看一眼；仍然不行就发 /school 手动重试。\n\n"
+        + `错误：${schoolExportError.slice(0, 200)}`,
+        dryRun
+      );
+      telegramMessagesSent += 1;
+      state.lastOutlookAlertAt = now.toISOString();
     }
   }
 

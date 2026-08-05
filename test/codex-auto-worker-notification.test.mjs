@@ -110,3 +110,26 @@ test("study distillation stays done when a middle chunk notification fails", asy
   assert.match(audits[0].reason, /study-chunk-failure/);
   assert.match(audits[0].reason, new RegExp(results[0].outFile.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 });
+
+test("回执带来源标签 —— 看得出是哪台机器、哪个引擎跑的", async () => {
+  const { sourceLabel } = await import("../src/codex-auto-worker.mjs");
+
+  assert.equal(sourceLabel("windows", "codex"), "[Windows · codex]");
+  assert.equal(sourceLabel("mac", "gui-control"), "[Mac · gui-control]");
+  // 未知节点不该把标签整个吞掉 —— 宁可显示原始值也不要显示空的。
+  assert.equal(sourceLabel("", ""), "[本机 · codex]");
+});
+
+test("聊天回执必须真的带上这个标签（源码守卫）", () => {
+  // 没有它的时候两台机器的回答长得一模一样，出问题时你无从判断该去哪台看日志。
+  // 2026-08-04 排查孤儿桥就吃过这个亏：回消息的一直是 Mac 上的桥，
+  // 而从消息本身完全看不出来。
+  const source = fs.readFileSync(
+    new URL("../src/codex-auto-worker.mjs", import.meta.url),
+    "utf8"
+  );
+  const start = source.indexOf('"chat-result"');
+  assert.ok(start > 0, "找不到 chat-result 分支");
+  const branch = source.slice(start, start + 320);
+  assert.match(branch, /sourceLabel\(ranOnNodeId, capability\)/);
+});

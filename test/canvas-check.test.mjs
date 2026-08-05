@@ -75,3 +75,42 @@ test("runCanvasDue sends and deduplicates a 401 alert before loading ICS", async
 
   assert.deepEqual(order, ["alert", "ics", "ics"]);
 });
+
+test("按了 /stop 之后 Canvas 检查必须跳过，/due 查询照常回答", async (t) => {
+  // 急停在这条路上一直等于没有：Canvas 检查照跑、照发提醒。
+  // 学校检查早就在 runSchoolCheckCli 开头查了 isPaused()，只有它漏着。
+  const { runCanvasCheck } = await import("../src/canvas-check.mjs");
+  const { writePauseState } = await import("../src/state/pause.mjs");
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "pai-canvas-pause-"));
+  const previousRoot = process.env.PROJECT_ROOT;
+  process.env.PROJECT_ROOT = root;
+  t.after(() => {
+    if (previousRoot === undefined) delete process.env.PROJECT_ROOT;
+    else process.env.PROJECT_ROOT = previousRoot;
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  writePauseState("stop", root);
+
+  let listed = 0;
+  const sent = [];
+  const count = await runCanvasCheck({
+    now: nowMs,
+    send: async (text) => { sent.push(text); },
+    listUpcoming: async () => { listed += 1; return []; },
+    loadIcs: async () => []
+  });
+
+  assert.equal(count, 0);
+  assert.equal(sent.length, 0, "暂停期间不该发任何提醒");
+  assert.equal(listed, 0, "暂停期间连查都不该查");
+
+  // /due 是用户主动问的，暂停期间也该回答 —— 刻意没在那条路上加早退。
+  const due = await runCanvasDue({
+    now: nowMs,
+    listUpcoming: async () => [],
+    loadIcs: async () => []
+  });
+  assert.equal(typeof due, "string");
+});

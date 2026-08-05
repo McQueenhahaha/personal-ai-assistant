@@ -16,6 +16,7 @@ import {
   sendTokenExpiryAlertIfNeeded
 } from "./canvas/token-alert.mjs";
 import { redactSensitive } from "./security/redact.mjs";
+import { isPaused } from "./state/pause.mjs";
 
 const SENT_STATE_FILE = "data/state/canvas-reminders-sent.json";
 
@@ -151,6 +152,13 @@ export async function runCanvasCheck({
   loadIcs = loadIcsAssignments,
   tokenAlertStateFile
 } = {}) {
+  // 按了 /stop 之后 Canvas 检查照跑、照发提醒 —— 急停在这条路上等于没有。
+  // 学校检查早就在 runSchoolCheckCli 开头查了 isPaused()，这条一直漏着。
+  // 刻意**不**加在 runCanvasDue：那是你主动发 /due 查询，暂停期间也该回答。
+  if (isPaused()) {
+    console.log("[canvas-check] 已暂停, 跳过本次。");
+    return 0;
+  }
   let sentCount = 0;
   const { assignments, reason, mode } = await loadAssignments({
     now,
