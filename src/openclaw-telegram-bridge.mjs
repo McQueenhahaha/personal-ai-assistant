@@ -362,7 +362,7 @@ async function handleFreeText({ token, chatId, text, dryRun }) {
   await send(token, chatId, "🤔 收到，正在思考，稍等…（由 Claude 回答）", dryRun);
 }
 
-async function handleCommand({ token, chatId, text, dryRun }) {
+export async function handleCommand({ token, chatId, text, dryRun }) {
   const parsed = commandParts(text);
   if (!parsed) return false;
   const { command, rest } = parsed;
@@ -710,7 +710,7 @@ async function handleCommand({ token, chatId, text, dryRun }) {
   return false;
 }
 
-async function processMessageList({ messages, stateFile, token, chatId, dryRun, processExisting }) {
+export async function processMessageList({ messages, stateFile, token, chatId, dryRun, processExisting }) {
   let state = readJson(stateFile, null);
 
   if (!state) {
