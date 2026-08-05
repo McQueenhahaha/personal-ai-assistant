@@ -16,7 +16,7 @@ import { dispatchToNode as dispatchToNodeDefault } from "./satellite/dispatch.mj
 import { dispatchToMac } from "./satellite/mac.mjs";
 import { pickNode, resolveBrainNodeId } from "./satellite/registry.mjs";
 import { appendAudit } from "./security/audit.mjs";
-import { createApproval } from "./security/pending.mjs";
+import { createApproval, loadApprovals } from "./security/pending.mjs";
 import {
   classifyTask,
   needsBrowser,
@@ -911,6 +911,25 @@ export async function processCodexAutoQueue({
       };
       try {
         task = readTask(claimed);
+
+        // 「已批准」这三个字原先是任务文件自己写的，没有任何一处核对过：
+        // worker 只看 taskType === "approved-privileged" 就把 T2 降成 T1，
+        // 而 approvalId 从头到尾只被塞进审计日志、从不回查。于是任何能往
+        // data/queues/codex/inbox/ 写一个 JSON 的东西，只要写上这个 taskType，
+        // 就拿到了「你已经在 Telegram 上按过 /ok」的待遇 —— 直接进
+        // danger-full-access 的 Codex 执行，而你的手机不会响。
+        // 而 /codex 任务本身就是 danger-full-access 跑在项目根目录，
+        // 它完全写得进那个 inbox：一次跑偏的 codex 任务能给自己签发通行证。
+        //
+        // fail-closed：查不到有效审批就拒绝。抛出去正好落进已有的 catch ——
+        // 写 .error.txt、进 failed/、发一条失败通知，失败即拒绝。
+        if (task.taskType === "approved-privileged") {
+          const approvalId = String(task.metadata?.approvalId || "");
+          if (loadApprovals()[approvalId]?.status !== "approved") {
+            throw new Error("approved-privileged 任务没有有效的审批记录，拒绝执行");
+          }
+        }
+
         // 记下"正在做什么"。该记录在灵魂包里，所以对端看得见 ——
         // 本机若死在半路，接管方能据此告诉用户什么被中断了，
         // 而不是让用户停在"任务已开始"之后再无下文。

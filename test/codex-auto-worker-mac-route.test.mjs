@@ -23,6 +23,25 @@ function setupTask(t, task, brainNodeId = "windows") {
   fs.mkdirSync(inbox, { recursive: true });
   fs.writeFileSync(path.join(inbox, "task.json"), JSON.stringify(task), "utf8");
 
+  // approved-privileged 任务现在要回查审批记录（fail-closed），所以这里得
+  // 把审批也建出来 —— 生产里的顺序就是「桥先建审批、你按 /ok、再建任务」。
+  // 不建的话任务会被正确地拒绝执行，那是新加的护栏在起作用，不是测试环境问题。
+  if (task.approvalId) {
+    fs.writeFileSync(
+      env.PENDING_APPROVALS_FILE,
+      JSON.stringify({
+        [task.approvalId]: {
+          id: task.approvalId,
+          status: "approved",
+          tier: "T2",
+          reason: "测试用已批准记录",
+          prompt: task.prompt
+        }
+      }),
+      "utf8"
+    );
+  }
+
   t.after(() => {
     for (const [key, value] of Object.entries(previous)) {
       if (value === undefined) delete process.env[key];
