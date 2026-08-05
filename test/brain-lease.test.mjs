@@ -535,3 +535,39 @@ test("Mac supervisor never initiates soul sync and logs each undetermined peer p
   assert.deepEqual(calls, ["service:true", "service:true"]);
   assert.equal(logs.filter((line) => line.includes("PEER_TAILSCALE_IP 未配置")).length, 2);
 });
+
+// chooseNewestLease 是防脑裂仲裁的核心，但「采纳对端租约」那条分支从未被任何
+// 测试执行到 —— 它决定的是"两台机器各持一份租约时，听谁的"。
+test("租约仲裁：本地无效时采纳对端", async () => {
+  const { chooseNewestLease } = await import("../src/brain/supervisor.mjs");
+  const peer = { holder: "mac", heartbeatAt: "2026-08-01T00:00:10.000Z", ttlSeconds: 90, reason: "renew" };
+
+  assert.deepEqual(chooseNewestLease(null, peer), { lease: peer, source: "peer" });
+  assert.deepEqual(chooseNewestLease({ holder: "" }, peer), { lease: peer, source: "peer" });
+});
+
+test("租约仲裁：两个都有效时听心跳更新的那份", async () => {
+  const { chooseNewestLease } = await import("../src/brain/supervisor.mjs");
+  const older = { holder: "windows", heartbeatAt: "2026-08-01T00:00:00.000Z", ttlSeconds: 90, reason: "renew" };
+  const newer = { holder: "mac", heartbeatAt: "2026-08-01T00:00:10.000Z", ttlSeconds: 90, reason: "renew" };
+
+  assert.equal(chooseNewestLease(older, newer).source, "peer");
+  assert.equal(chooseNewestLease(newer, older).source, "local");
+});
+
+test("租约仲裁：心跳相等时偏向本地 —— 这是有意的，不是 bug", async () => {
+  // 用严格大于而不是大于等于：相等时不换手，避免两台机器在时钟对齐的
+  // 瞬间来回抢租约。改成 >= 会让这条断言立刻报红。
+  const { chooseNewestLease } = await import("../src/brain/supervisor.mjs");
+  const at = "2026-08-01T00:00:00.000Z";
+  const local = { holder: "windows", heartbeatAt: at, ttlSeconds: 90, reason: "renew" };
+  const peer = { holder: "mac", heartbeatAt: at, ttlSeconds: 90, reason: "renew" };
+
+  assert.deepEqual(chooseNewestLease(local, peer), { lease: local, source: "local" });
+});
+
+test("租约仲裁：两个都无效时不选任何一份", async () => {
+  const { chooseNewestLease } = await import("../src/brain/supervisor.mjs");
+  assert.deepEqual(chooseNewestLease(null, null), { lease: null, source: "none" });
+  assert.deepEqual(chooseNewestLease({}, { holder: 123 }), { lease: null, source: "none" });
+});
