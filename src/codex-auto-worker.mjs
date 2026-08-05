@@ -1246,7 +1246,15 @@ export async function processCodexAutoQueue({
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   processCodexAutoQueue({ notify: !process.argv.includes("--no-notify") }).then((results) => {
-    console.log(`Codex auto worker processed ${results.length} task(s).`);
+    // 空转不出声。循环脚本每 20 秒起一次这个 CLI，无条件打印的话日志里
+    // 99.96% 是同一句 "processed 0 task(s)."（实测 69164 行里 69138 行），
+    // 排障时真事件被淹没，而且文件被每 20 秒 touch 一次，
+    // data\logs 的 7 天清理永远够不着它 —— 一直长下去。
+    //
+    // 源头噤声比加轮转好：安静之后那份清理规则自然开始管它，不用新机制。
+    if (results.length > 0) {
+      console.log(`Codex auto worker processed ${results.length} task(s).`);
+    }
   }).catch((error) => {
     console.error(error.stack || error.message);
     process.exitCode = 1;
