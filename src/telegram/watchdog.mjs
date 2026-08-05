@@ -15,6 +15,10 @@ const LOG_FILE = "./data/logs/bridge-watchdog.log";
 const LOG_MAX_BYTES = 1024 * 1024;
 const RESTART_SCRIPT = "./scripts/start-openclaw-telegram-bridge-hidden.ps1";
 const SUPERVISOR_START_SCRIPT = "./scripts/start-brain-supervisor-hidden.ps1";
+const WORKER_LOOP_START_SCRIPT = "./scripts/start-codex-auto-worker-hidden.ps1";
+const GAME_WATCHER_START_SCRIPT = "./scripts/start-game-mode-watcher-hidden.ps1";
+const RUNNING_FLAG = "./data/assistant-running.flag";
+const DESIRED_RUNNING_FLAG = "./data/assistant-desired-running.flag";
 const STOP_SETTLE_DELAY_MS = 1000;
 const RESTART_VERIFY_DELAY_MS = 5000;
 
@@ -59,6 +63,25 @@ export function decideBridgeOwnership({ selfId, lease, nowMs, peerConfigured }) 
   return { shouldRunLocally: "no", reason: "peer-holds-lease" };
 }
 
+export function decideWorkerLoopAction({
+  runningFlagExists,
+  processAlive,
+  shouldRunLocally
+}) {
+  if (runningFlagExists === false) return { start: false, reason: "not-desired" };
+  if (shouldRunLocally !== "yes") return { start: false, reason: "not-local-brain" };
+  if (processAlive === null) return { start: false, reason: "unverifiable" };
+  if (processAlive === true) return { start: false, reason: "healthy" };
+  return { start: true, reason: "process-missing" };
+}
+
+export function decideGameWatcherAction({ desiredFlagExists, processAlive }) {
+  if (desiredFlagExists === false) return { start: false, reason: "not-desired" };
+  if (processAlive === null) return { start: false, reason: "unverifiable" };
+  if (processAlive === true) return { start: false, reason: "healthy" };
+  return { start: true, reason: "process-missing" };
+}
+
 export function readHeartbeat(file) {
   try {
     const heartbeat = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -77,66 +100,76 @@ export function readBrainLease(file) {
   }
 }
 
-export function buildSupervisorProcessCheckCommand() {
+function buildProcessCheckCommand({ processName, commandLineFilter }) {
   return [
     "$ErrorActionPreference = 'Stop'",
-    "$items = @(Get-CimInstance Win32_Process -Filter \"Name = 'node.exe'\" | Where-Object { $_.CommandLine -and ($_.CommandLine -like '*brain/supervisor*' -or $_.CommandLine -like '*brain\\supervisor*') })",
+    `$items = @(Get-CimInstance Win32_Process -Filter "Name = '${processName}'" | Where-Object { $_.CommandLine -and ${commandLineFilter} })`,
     "$items | ForEach-Object { Write-Output $_.ProcessId }"
   ].join("; ");
+}
+
+function getPidsByCommandLine({ processName, commandLineFilter, label }) {
+  if (process.platform !== "win32") return null;
+
+  const command = buildProcessCheckCommand({ processName, commandLineFilter });
+  const result = spawnSync("powershell.exe", ["-NoProfile", "-Command", command], {
+    encoding: "utf8",
+    timeout: 10_000,
+    windowsHide: true
+  });
+
+  if (result.error || result.status !== 0) {
+    const detail = result.error?.message || result.stderr.trim() || `exit ${result.status}`;
+    throw new Error(`${label} process check failed: ${detail}`);
+  }
+
+  const output = result.stdout.trim();
+  if (!output) return [];
+
+  const pids = output.split(/\s+/).map(Number);
+  if (pids.some((pid) => !Number.isInteger(pid) || pid <= 0)) {
+    throw new Error(`${label} process check returned unexpected output: ${output}`);
+  }
+  return pids;
+}
+
+export function buildSupervisorProcessCheckCommand() {
+  return buildProcessCheckCommand({
+    processName: "node.exe",
+    commandLineFilter: "($_.CommandLine -like '*brain/supervisor*' -or $_.CommandLine -like '*brain\\supervisor*')"
+  });
 }
 
 export function getSupervisorPids() {
-  if (process.platform !== "win32") return null;
-
-  const command = buildSupervisorProcessCheckCommand();
-  const result = spawnSync("powershell.exe", ["-NoProfile", "-Command", command], {
-    encoding: "utf8",
-    timeout: 10_000,
-    windowsHide: true
+  return getPidsByCommandLine({
+    processName: "node.exe",
+    commandLineFilter: "($_.CommandLine -like '*brain/supervisor*' -or $_.CommandLine -like '*brain\\supervisor*')",
+    label: "Brain supervisor"
   });
-
-  if (result.error || result.status !== 0) {
-    const detail = result.error?.message || result.stderr.trim() || `exit ${result.status}`;
-    throw new Error(`Brain supervisor process check failed: ${detail}`);
-  }
-
-  const output = result.stdout.trim();
-  if (!output) return [];
-
-  const pids = output.split(/\s+/).map(Number);
-  if (pids.some((pid) => !Number.isInteger(pid) || pid <= 0)) {
-    throw new Error(`Brain supervisor process check returned unexpected output: ${output}`);
-  }
-  return pids;
 }
 
 export function getBridgePids() {
-  if (process.platform !== "win32") return null;
-
-  const command = [
-    "$ErrorActionPreference = 'Stop'",
-    "$items = @(Get-CimInstance Win32_Process -Filter \"Name = 'node.exe'\" | Where-Object { $_.CommandLine -and $_.CommandLine -like '*openclaw-telegram-bridge*' })",
-    "$items | ForEach-Object { Write-Output $_.ProcessId }"
-  ].join("; ");
-  const result = spawnSync("powershell.exe", ["-NoProfile", "-Command", command], {
-    encoding: "utf8",
-    timeout: 10_000,
-    windowsHide: true
+  return getPidsByCommandLine({
+    processName: "node.exe",
+    commandLineFilter: "$_.CommandLine -like '*openclaw-telegram-bridge*'",
+    label: "Bridge"
   });
+}
 
-  if (result.error || result.status !== 0) {
-    const detail = result.error?.message || result.stderr.trim() || `exit ${result.status}`;
-    throw new Error(`Bridge process check failed: ${detail}`);
-  }
+export function getWorkerLoopPids() {
+  return getPidsByCommandLine({
+    processName: "powershell.exe",
+    commandLineFilter: "$_.ProcessId -ne $PID -and $_.CommandLine -like '*run-codex-auto-worker-loop.ps1*'",
+    label: "Codex auto worker loop"
+  });
+}
 
-  const output = result.stdout.trim();
-  if (!output) return [];
-
-  const pids = output.split(/\s+/).map(Number);
-  if (pids.some((pid) => !Number.isInteger(pid) || pid <= 0)) {
-    throw new Error(`Bridge process check returned unexpected output: ${output}`);
-  }
-  return pids;
+export function getGameWatcherPids() {
+  return getPidsByCommandLine({
+    processName: "powershell.exe",
+    commandLineFilter: "$_.ProcessId -ne $PID -and $_.CommandLine -like '*watch-game-mode.ps1*'",
+    label: "Game mode watcher"
+  });
 }
 
 export function verifyRestart({ beforePids, afterPids }) {
@@ -282,6 +315,56 @@ function startSupervisor() {
   }
 }
 
+function startWorkerLoop() {
+  if (process.platform !== "win32") {
+    throw new Error("Codex auto worker loop start script is only supported on Windows");
+  }
+
+  const script = resolveFromCwd(WORKER_LOOP_START_SCRIPT);
+  const result = spawnSync("powershell.exe", [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    script
+  ], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    timeout: 30_000,
+    windowsHide: true
+  });
+
+  if (result.error || result.status !== 0) {
+    const detail = result.error?.message || result.stderr.trim() || `exit ${result.status}`;
+    throw new Error(`Codex auto worker loop start failed: ${detail}`);
+  }
+}
+
+function startGameWatcher() {
+  if (process.platform !== "win32") {
+    throw new Error("Game mode watcher start script is only supported on Windows");
+  }
+
+  const script = resolveFromCwd(GAME_WATCHER_START_SCRIPT);
+  const result = spawnSync("powershell.exe", [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    script
+  ], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    timeout: 30_000,
+    windowsHide: true
+  });
+
+  if (result.error || result.status !== 0) {
+    const detail = result.error?.message || result.stderr.trim() || `exit ${result.status}`;
+    throw new Error(`Game mode watcher start failed: ${detail}`);
+  }
+}
+
 export async function ensureSupervisorRunning({ peerConfigured }, dependencies = {}) {
   if (!peerConfigured) {
     return { checked: false, started: false, reason: "single-node" };
@@ -327,6 +410,112 @@ export async function ensureSupervisorRunning({ peerConfigured }, dependencies =
     reason: startError ? "supervisor-start-failed" : "supervisor-start-requested",
     supervisorPids,
     startError
+  };
+}
+
+export async function ensureWorkerLoopRunning({ shouldRunLocally }, dependencies = {}) {
+  const existsSyncImpl = dependencies.existsSync || fs.existsSync;
+  const runningFlagExists = existsSyncImpl(resolveFromCwd(RUNNING_FLAG));
+  if (runningFlagExists === false) {
+    return { checked: false, started: false, reason: "not-desired" };
+  }
+  if (shouldRunLocally !== "yes") {
+    return { checked: false, started: false, reason: "not-local-brain" };
+  }
+
+  const getWorkerLoopPidsImpl = dependencies.getWorkerLoopPids || getWorkerLoopPids;
+  const startWorkerLoopImpl = dependencies.startWorkerLoop || startWorkerLoop;
+  const appendLogImpl = dependencies.appendLog || appendLog;
+  const sendWorkerLoopAlertImpl = dependencies.sendWorkerLoopAlert ||
+    ((options) => sendWorkerLoopAlert(options, dependencies));
+  const workerLoopPids = getWorkerLoopPidsImpl();
+  const processAlive = workerLoopPids === null ? null : workerLoopPids.length > 0;
+  const decision = decideWorkerLoopAction({
+    runningFlagExists,
+    processAlive,
+    shouldRunLocally
+  });
+
+  if (!decision.start) {
+    return { checked: processAlive !== null, started: false, reason: decision.reason };
+  }
+
+  appendLogImpl({
+    state: "worker-loop-missing",
+    event: "worker-loop-start-requested",
+    reason: decision.reason
+  });
+
+  let startError = null;
+  try {
+    await startWorkerLoopImpl();
+  } catch (error) {
+    startError = errorMessage(error);
+  }
+
+  appendLogImpl({
+    state: startError ? "worker-loop-start-failed" : "worker-loop-start-requested",
+    event: startError ? "worker-loop-start-failed" : "worker-loop-start-dispatched",
+    reason: decision.reason,
+    startError
+  });
+  await sendWorkerLoopAlertImpl({ startError });
+
+  return {
+    checked: true,
+    started: startError === null,
+    reason: startError ? "worker-loop-start-failed" : "worker-loop-start-requested"
+  };
+}
+
+export async function ensureGameWatcherRunning({} = {}, dependencies = {}) {
+  const existsSyncImpl = dependencies.existsSync || fs.existsSync;
+  const desiredFlagExists = existsSyncImpl(resolveFromCwd(DESIRED_RUNNING_FLAG));
+  if (desiredFlagExists === false) {
+    return { checked: false, started: false, reason: "not-desired" };
+  }
+
+  const getGameWatcherPidsImpl = dependencies.getGameWatcherPids || getGameWatcherPids;
+  const startGameWatcherImpl = dependencies.startGameWatcher || startGameWatcher;
+  const appendLogImpl = dependencies.appendLog || appendLog;
+  const sendGameWatcherAlertImpl = dependencies.sendGameWatcherAlert ||
+    ((options) => sendGameWatcherAlert(options, dependencies));
+  const gameWatcherPids = getGameWatcherPidsImpl();
+  const processAlive = gameWatcherPids === null ? null : gameWatcherPids.length > 0;
+  const decision = decideGameWatcherAction({
+    desiredFlagExists,
+    processAlive
+  });
+
+  if (!decision.start) {
+    return { checked: processAlive !== null, started: false, reason: decision.reason };
+  }
+
+  appendLogImpl({
+    state: "game-watcher-missing",
+    event: "game-watcher-start-requested",
+    reason: decision.reason
+  });
+
+  let startError = null;
+  try {
+    await startGameWatcherImpl();
+  } catch (error) {
+    startError = errorMessage(error);
+  }
+
+  appendLogImpl({
+    state: startError ? "game-watcher-start-failed" : "game-watcher-start-requested",
+    event: startError ? "game-watcher-start-failed" : "game-watcher-start-dispatched",
+    reason: decision.reason,
+    startError
+  });
+  await sendGameWatcherAlertImpl({ startError });
+
+  return {
+    checked: true,
+    started: startError === null,
+    reason: startError ? "game-watcher-start-failed" : "game-watcher-start-requested"
   };
 }
 
@@ -424,6 +613,36 @@ async function sendSupervisorAlert({ startError }) {
     ? `❗ 大脑 supervisor 不在且自动拉起失败，需要人工处理：${startError}`
     : "⚠️ 大脑 supervisor 不在，看门狗已请求自动拉起";
   await sendWatchdogAlert({
+    state,
+    reason: "process-missing",
+    text,
+    dedupe: true,
+    details: { startError }
+  });
+}
+
+async function sendWorkerLoopAlert({ startError }, dependencies = {}) {
+  const state = startError ? "worker-loop-start-failed" : "worker-loop-start-requested";
+  const text = startError
+    ? `❗ codex 队列 worker 自动拉起失败，需要人工处理：${startError}`
+    : "⚠️ codex 队列 worker 不在（助手处于运行态），看门狗已请求自动拉起";
+  const sendWatchdogAlertImpl = dependencies.sendWatchdogAlert || sendWatchdogAlert;
+  await sendWatchdogAlertImpl({
+    state,
+    reason: "process-missing",
+    text,
+    dedupe: true,
+    details: { startError }
+  });
+}
+
+async function sendGameWatcherAlert({ startError }, dependencies = {}) {
+  const state = startError ? "game-watcher-start-failed" : "game-watcher-start-requested";
+  const text = startError
+    ? `❗ 游戏模式 watcher 自动拉起失败，需要人工处理：${startError}`
+    : "⚠️ 游戏模式 watcher 不在（助手处于期望运行态），看门狗已请求自动拉起";
+  const sendWatchdogAlertImpl = dependencies.sendWatchdogAlert || sendWatchdogAlert;
+  await sendWatchdogAlertImpl({
     state,
     reason: "process-missing",
     text,
@@ -608,13 +827,46 @@ export async function main(dependencies = {}) {
   const getBridgePidsImpl = dependencies.getBridgePids || getBridgePids;
   const beforePids = getBridgePidsImpl();
   const reconcileBridgeOwnershipImpl = dependencies.reconcileBridgeOwnership || reconcileBridgeOwnership;
-  return reconcileBridgeOwnershipImpl({
+  const bridgeResult = await reconcileBridgeOwnershipImpl({
     ownership,
     beforePids,
     heartbeatAtMs,
     nowMs,
     staleMs: dependencies.staleMs || watchdogStaleMs()
   }, dependencies);
+
+  const appendLogImpl = dependencies.appendLog || appendLog;
+  const ensureWorkerLoopRunningImpl = dependencies.ensureWorkerLoopRunning || ensureWorkerLoopRunning;
+  try {
+    await ensureWorkerLoopRunningImpl({ shouldRunLocally: ownership.shouldRunLocally }, dependencies);
+  } catch (error) {
+    try {
+      appendLogImpl({
+        state: "error",
+        event: "worker-loop-reconcile-failed",
+        error: errorMessage(error)
+      });
+    } catch {
+      // The bridge reconcile has already completed; an add-on log failure must not affect it.
+    }
+  }
+
+  const ensureGameWatcherRunningImpl = dependencies.ensureGameWatcherRunning || ensureGameWatcherRunning;
+  try {
+    await ensureGameWatcherRunningImpl({}, dependencies);
+  } catch (error) {
+    try {
+      appendLogImpl({
+        state: "error",
+        event: "game-watcher-reconcile-failed",
+        error: errorMessage(error)
+      });
+    } catch {
+      // The bridge reconcile has already completed; an add-on log failure must not affect it.
+    }
+  }
+
+  return bridgeResult;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {

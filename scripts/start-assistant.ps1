@@ -1,11 +1,10 @@
-$ErrorActionPreference = "Continue"
+﻿$ErrorActionPreference = "Continue"
 . "$PSScriptRoot\openclaw-env.ps1"
 
 $Root = Split-Path -Parent $PSScriptRoot
 $DataDir = Join-Path $Root "data"
 $LogDir = Join-Path $DataDir "logs"
 $DesiredFlag = Join-Path $DataDir "assistant-desired-running.flag"
-$WatcherScript = Join-Path $PSScriptRoot "watch-game-mode.ps1"
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
 "desired $(Get-Date -Format o)" | Set-Content -Path $DesiredFlag -Encoding UTF8
@@ -38,19 +37,10 @@ try {
   $_ | Out-File -FilePath (Join-Path $LogDir "cleanup-on-start.err.log") -Append
 }
 
-$existingWatcher = Get-CimInstance Win32_Process |
-  Where-Object {
-    $_.Name -eq "powershell.exe" -and
-    $_.CommandLine -and
-    $_.CommandLine -match [regex]::Escape($WatcherScript)
-  } |
-  Select-Object -First 1
-
-if (-not $existingWatcher) {
-  Start-Process `
-    -FilePath "powershell.exe" `
-    -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$WatcherScript`"" `
-    -WindowStyle Hidden
+try {
+  & "$PSScriptRoot\start-game-mode-watcher-hidden.ps1"
+} catch {
+  $_ | Out-File -FilePath (Join-Path $LogDir "start-game-mode-watcher.err.log") -Append
 }
 
 if (Test-GameRunning) {
