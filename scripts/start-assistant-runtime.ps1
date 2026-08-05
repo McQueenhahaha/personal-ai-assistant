@@ -29,7 +29,6 @@ try {
 # （表现为"发了命令助手不回"）。两者还会互相覆盖 setMyCommands 的命令菜单。
 # 桥现在以 TELEGRAM_DIRECT_MODE=true 直连，不需要 gateway。
 # try {
-#   & "$PSScriptRoot\start-openclaw-gateway-hidden.ps1" *> (Join-Path $LogDir "start-openclaw.log")
 # } catch {
 #   $_ | Out-File -FilePath (Join-Path $LogDir "start-openclaw.err.log") -Append
 # }

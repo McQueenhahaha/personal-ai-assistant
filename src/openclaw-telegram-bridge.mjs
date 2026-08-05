@@ -905,7 +905,7 @@ async function main() {
   const once = hasArg("--once");
   const dryRun = hasArg("--dry-run");
   const processExisting = hasArg("--process-existing");
-  const directMode = boolEnv("TELEGRAM_DIRECT_MODE", false);
+  const directMode = boolEnv("TELEGRAM_DIRECT_MODE", true);
 
   if (!boolEnv("ENABLE_OPENCLAW_TELEGRAM_BRIDGE", true)) {
     console.log("OpenClaw Telegram bridge disabled. Set ENABLE_OPENCLAW_TELEGRAM_BRIDGE=true to enable.");
@@ -962,7 +962,7 @@ async function main() {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   main().catch((error) => {
-    if (boolEnv("TELEGRAM_DIRECT_MODE", false)) {
+    if (boolEnv("TELEGRAM_DIRECT_MODE", true)) {
       console.error(`[FATAL] 直连模式异常退出\n${errorDetails(error)}`);
     } else {
       console.error(errorDetails(error));

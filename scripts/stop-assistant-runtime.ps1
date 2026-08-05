@@ -13,7 +13,6 @@ if (Test-Path -LiteralPath $RunningFlag) {
 
 $patterns = @(
   "run-local-queue-loop.ps1",
-  "run-codex-queue-monitor-loop.ps1",
   "run-codex-auto-worker-loop.ps1",
   "openclaw-telegram-bridge.mjs",
   "openclaw.mjs gateway",

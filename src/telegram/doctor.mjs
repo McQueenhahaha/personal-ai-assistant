@@ -141,7 +141,7 @@ function printBridgeProcesses() {
 
 async function main() {
   loadEnv();
-  const directMode = boolEnv("TELEGRAM_DIRECT_MODE", false);
+  const directMode = boolEnv("TELEGRAM_DIRECT_MODE", true);
   console.log(`当前模式：${directMode ? "Telegram 直连模式" : "OpenClaw 文件模式"}`);
 
   const offset = inspectJsonFile("offset", resolveFromCwd(OFFSET_FILE));

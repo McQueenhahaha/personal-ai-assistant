@@ -460,8 +460,7 @@ function summarizeCommand(command) {
     ["get-volume", "检查磁盘卷状态"],
     ["get-physicaldisk", "检查物理磁盘状态"],
     ["get-storagereliabilitycounter", "读取磁盘可靠性计数器"],
-    ["npm run check", "检查 AI 助手项目脚本语法"],
-    ["openclaw gateway health", "检查 OpenClaw gateway 状态"]
+    ["npm run check", "检查 AI 助手项目脚本语法"]
   ];
 
   for (const [needle, label] of knownSteps) {
