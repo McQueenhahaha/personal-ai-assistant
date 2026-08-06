@@ -16,6 +16,7 @@ const LOG_MAX_BYTES = 1024 * 1024;
 const RESTART_SCRIPT = "./scripts/start-openclaw-telegram-bridge-hidden.ps1";
 const SUPERVISOR_START_SCRIPT = "./scripts/start-brain-supervisor-hidden.ps1";
 const WORKER_LOOP_START_SCRIPT = "./scripts/start-codex-auto-worker-hidden.ps1";
+const LOCAL_QUEUE_LOOP_START_SCRIPT = "./scripts/start-local-queue-loop-hidden.ps1";
 const GAME_WATCHER_START_SCRIPT = "./scripts/start-game-mode-watcher-hidden.ps1";
 const RUNNING_FLAG = "./data/assistant-running.flag";
 const DESIRED_RUNNING_FLAG = "./data/assistant-desired-running.flag";
@@ -68,18 +69,35 @@ export function decideWorkerLoopAction({
   processAlive,
   shouldRunLocally
 }) {
-  if (runningFlagExists === false) return { start: false, reason: "not-desired" };
-  if (shouldRunLocally !== "yes") return { start: false, reason: "not-local-brain" };
+  return decideManagedProcessAction({
+    flagExists: runningFlagExists,
+    processAlive,
+    shouldRunLocally,
+    leaseManaged: true
+  });
+}
+
+function decideManagedProcessAction({
+  flagExists,
+  processAlive,
+  shouldRunLocally,
+  leaseManaged
+}) {
+  if (flagExists === false) return { start: false, reason: "not-desired" };
+  if (leaseManaged && shouldRunLocally !== "yes") {
+    return { start: false, reason: "not-local-brain" };
+  }
   if (processAlive === null) return { start: false, reason: "unverifiable" };
   if (processAlive === true) return { start: false, reason: "healthy" };
   return { start: true, reason: "process-missing" };
 }
 
 export function decideGameWatcherAction({ desiredFlagExists, processAlive }) {
-  if (desiredFlagExists === false) return { start: false, reason: "not-desired" };
-  if (processAlive === null) return { start: false, reason: "unverifiable" };
-  if (processAlive === true) return { start: false, reason: "healthy" };
-  return { start: true, reason: "process-missing" };
+  return decideManagedProcessAction({
+    flagExists: desiredFlagExists,
+    processAlive,
+    leaseManaged: false
+  });
 }
 
 export function readHeartbeat(file) {
@@ -161,6 +179,14 @@ export function getWorkerLoopPids() {
     processName: "powershell.exe",
     commandLineFilter: "$_.ProcessId -ne $PID -and $_.CommandLine -like '*run-codex-auto-worker-loop.ps1*'",
     label: "Codex auto worker loop"
+  });
+}
+
+export function getLocalQueueLoopPids() {
+  return getPidsByCommandLine({
+    processName: "powershell.exe",
+    commandLineFilter: "$_.ProcessId -ne $PID -and $_.CommandLine -like '*run-local-queue-loop.ps1*'",
+    label: "Local queue loop"
   });
 }
 
@@ -315,12 +341,12 @@ function startSupervisor() {
   }
 }
 
-function startWorkerLoop() {
+function startProcessFromScript({ scriptFile, unsupportedMessage, failureMessage }) {
   if (process.platform !== "win32") {
-    throw new Error("Codex auto worker loop start script is only supported on Windows");
+    throw new Error(unsupportedMessage);
   }
 
-  const script = resolveFromCwd(WORKER_LOOP_START_SCRIPT);
+  const script = resolveFromCwd(scriptFile);
   const result = spawnSync("powershell.exe", [
     "-NoProfile",
     "-ExecutionPolicy",
@@ -336,33 +362,32 @@ function startWorkerLoop() {
 
   if (result.error || result.status !== 0) {
     const detail = result.error?.message || result.stderr.trim() || `exit ${result.status}`;
-    throw new Error(`Codex auto worker loop start failed: ${detail}`);
+    throw new Error(`${failureMessage}: ${detail}`);
   }
 }
 
-function startGameWatcher() {
-  if (process.platform !== "win32") {
-    throw new Error("Game mode watcher start script is only supported on Windows");
-  }
-
-  const script = resolveFromCwd(GAME_WATCHER_START_SCRIPT);
-  const result = spawnSync("powershell.exe", [
-    "-NoProfile",
-    "-ExecutionPolicy",
-    "Bypass",
-    "-File",
-    script
-  ], {
-    cwd: process.cwd(),
-    encoding: "utf8",
-    timeout: 30_000,
-    windowsHide: true
+function startWorkerLoop() {
+  return startProcessFromScript({
+    scriptFile: WORKER_LOOP_START_SCRIPT,
+    unsupportedMessage: "Codex auto worker loop start script is only supported on Windows",
+    failureMessage: "Codex auto worker loop start failed"
   });
+}
 
-  if (result.error || result.status !== 0) {
-    const detail = result.error?.message || result.stderr.trim() || `exit ${result.status}`;
-    throw new Error(`Game mode watcher start failed: ${detail}`);
-  }
+function startLocalQueueLoop() {
+  return startProcessFromScript({
+    scriptFile: LOCAL_QUEUE_LOOP_START_SCRIPT,
+    unsupportedMessage: "Local queue loop start script is only supported on Windows",
+    failureMessage: "Local queue loop start failed"
+  });
+}
+
+function startGameWatcher() {
+  return startProcessFromScript({
+    scriptFile: GAME_WATCHER_START_SCRIPT,
+    unsupportedMessage: "Game mode watcher start script is only supported on Windows",
+    failureMessage: "Game mode watcher start failed"
+  });
 }
 
 export async function ensureSupervisorRunning({ peerConfigured }, dependencies = {}) {
@@ -413,27 +438,39 @@ export async function ensureSupervisorRunning({ peerConfigured }, dependencies =
   };
 }
 
-export async function ensureWorkerLoopRunning({ shouldRunLocally }, dependencies = {}) {
+async function ensureManagedProcessRunning({
+  flagFile,
+  shouldRunLocally,
+  leaseManaged,
+  getPidsDependency,
+  getPidsDefault,
+  startDependency,
+  startDefault,
+  sendAlertDependency,
+  sendAlertDefault,
+  statePrefix
+}, dependencies) {
   const existsSyncImpl = dependencies.existsSync || fs.existsSync;
-  const runningFlagExists = existsSyncImpl(resolveFromCwd(RUNNING_FLAG));
-  if (runningFlagExists === false) {
+  const flagExists = existsSyncImpl(resolveFromCwd(flagFile));
+  if (flagExists === false) {
     return { checked: false, started: false, reason: "not-desired" };
   }
-  if (shouldRunLocally !== "yes") {
+  if (leaseManaged && shouldRunLocally !== "yes") {
     return { checked: false, started: false, reason: "not-local-brain" };
   }
 
-  const getWorkerLoopPidsImpl = dependencies.getWorkerLoopPids || getWorkerLoopPids;
-  const startWorkerLoopImpl = dependencies.startWorkerLoop || startWorkerLoop;
+  const getPidsImpl = dependencies[getPidsDependency] || getPidsDefault;
+  const startImpl = dependencies[startDependency] || startDefault;
   const appendLogImpl = dependencies.appendLog || appendLog;
-  const sendWorkerLoopAlertImpl = dependencies.sendWorkerLoopAlert ||
-    ((options) => sendWorkerLoopAlert(options, dependencies));
-  const workerLoopPids = getWorkerLoopPidsImpl();
-  const processAlive = workerLoopPids === null ? null : workerLoopPids.length > 0;
-  const decision = decideWorkerLoopAction({
-    runningFlagExists,
+  const sendAlertImpl = dependencies[sendAlertDependency] ||
+    ((options) => sendAlertDefault(options, dependencies));
+  const pids = getPidsImpl();
+  const processAlive = pids === null ? null : pids.length > 0;
+  const decision = decideManagedProcessAction({
+    flagExists,
     processAlive,
-    shouldRunLocally
+    shouldRunLocally,
+    leaseManaged
   });
 
   if (!decision.start) {
@@ -441,82 +478,75 @@ export async function ensureWorkerLoopRunning({ shouldRunLocally }, dependencies
   }
 
   appendLogImpl({
-    state: "worker-loop-missing",
-    event: "worker-loop-start-requested",
+    state: `${statePrefix}-missing`,
+    event: `${statePrefix}-start-requested`,
     reason: decision.reason
   });
 
   let startError = null;
   try {
-    await startWorkerLoopImpl();
+    await startImpl();
   } catch (error) {
     startError = errorMessage(error);
   }
 
   appendLogImpl({
-    state: startError ? "worker-loop-start-failed" : "worker-loop-start-requested",
-    event: startError ? "worker-loop-start-failed" : "worker-loop-start-dispatched",
+    state: startError ? `${statePrefix}-start-failed` : `${statePrefix}-start-requested`,
+    event: startError ? `${statePrefix}-start-failed` : `${statePrefix}-start-dispatched`,
     reason: decision.reason,
     startError
   });
-  await sendWorkerLoopAlertImpl({ startError });
+  await sendAlertImpl({ startError });
 
   return {
     checked: true,
     started: startError === null,
-    reason: startError ? "worker-loop-start-failed" : "worker-loop-start-requested"
+    reason: startError ? `${statePrefix}-start-failed` : `${statePrefix}-start-requested`
   };
 }
 
+export async function ensureWorkerLoopRunning({ shouldRunLocally }, dependencies = {}) {
+  return ensureManagedProcessRunning({
+    flagFile: RUNNING_FLAG,
+    shouldRunLocally,
+    leaseManaged: true,
+    getPidsDependency: "getWorkerLoopPids",
+    getPidsDefault: getWorkerLoopPids,
+    startDependency: "startWorkerLoop",
+    startDefault: startWorkerLoop,
+    sendAlertDependency: "sendWorkerLoopAlert",
+    sendAlertDefault: sendWorkerLoopAlert,
+    statePrefix: "worker-loop"
+  }, dependencies);
+}
+
+export async function ensureLocalQueueLoopRunning({ shouldRunLocally }, dependencies = {}) {
+  return ensureManagedProcessRunning({
+    flagFile: RUNNING_FLAG,
+    shouldRunLocally,
+    leaseManaged: true,
+    getPidsDependency: "getLocalQueueLoopPids",
+    getPidsDefault: getLocalQueueLoopPids,
+    startDependency: "startLocalQueueLoop",
+    startDefault: startLocalQueueLoop,
+    sendAlertDependency: "sendLocalQueueLoopAlert",
+    sendAlertDefault: sendLocalQueueLoopAlert,
+    statePrefix: "local-queue-loop"
+  }, dependencies);
+}
+
 export async function ensureGameWatcherRunning({} = {}, dependencies = {}) {
-  const existsSyncImpl = dependencies.existsSync || fs.existsSync;
-  const desiredFlagExists = existsSyncImpl(resolveFromCwd(DESIRED_RUNNING_FLAG));
-  if (desiredFlagExists === false) {
-    return { checked: false, started: false, reason: "not-desired" };
-  }
-
-  const getGameWatcherPidsImpl = dependencies.getGameWatcherPids || getGameWatcherPids;
-  const startGameWatcherImpl = dependencies.startGameWatcher || startGameWatcher;
-  const appendLogImpl = dependencies.appendLog || appendLog;
-  const sendGameWatcherAlertImpl = dependencies.sendGameWatcherAlert ||
-    ((options) => sendGameWatcherAlert(options, dependencies));
-  const gameWatcherPids = getGameWatcherPidsImpl();
-  const processAlive = gameWatcherPids === null ? null : gameWatcherPids.length > 0;
-  const decision = decideGameWatcherAction({
-    desiredFlagExists,
-    processAlive
-  });
-
-  if (!decision.start) {
-    return { checked: processAlive !== null, started: false, reason: decision.reason };
-  }
-
-  appendLogImpl({
-    state: "game-watcher-missing",
-    event: "game-watcher-start-requested",
-    reason: decision.reason
-  });
-
-  let startError = null;
-  try {
-    await startGameWatcherImpl();
-  } catch (error) {
-    startError = errorMessage(error);
-  }
-
-  appendLogImpl({
-    state: startError ? "game-watcher-start-failed" : "game-watcher-start-requested",
-    event: startError ? "game-watcher-start-failed" : "game-watcher-start-dispatched",
-    reason: decision.reason,
-    startError
-  });
-  await sendGameWatcherAlertImpl({ startError });
-
-  return {
-    checked: true,
-    started: startError === null,
-    reason: startError ? "game-watcher-start-failed" : "game-watcher-start-requested"
-  };
+  return ensureManagedProcessRunning({
+    flagFile: DESIRED_RUNNING_FLAG,
+    leaseManaged: false,
+    getPidsDependency: "getGameWatcherPids",
+    getPidsDefault: getGameWatcherPids,
+    startDependency: "startGameWatcher",
+    startDefault: startGameWatcher,
+    sendAlertDependency: "sendGameWatcherAlert",
+    sendAlertDefault: sendGameWatcherAlert,
+    statePrefix: "game-watcher"
+  }, dependencies);
 }
 
 function formatHeartbeatAge(heartbeatAtMs, nowMs) {
@@ -621,11 +651,14 @@ async function sendSupervisorAlert({ startError }) {
   });
 }
 
-async function sendWorkerLoopAlert({ startError }, dependencies = {}) {
-  const state = startError ? "worker-loop-start-failed" : "worker-loop-start-requested";
-  const text = startError
-    ? `❗ codex 队列 worker 自动拉起失败，需要人工处理：${startError}`
-    : "⚠️ codex 队列 worker 不在（助手处于运行态），看门狗已请求自动拉起";
+async function sendManagedProcessAlert({
+  startError,
+  statePrefix,
+  failureText,
+  missingText
+}, dependencies) {
+  const state = startError ? `${statePrefix}-start-failed` : `${statePrefix}-start-requested`;
+  const text = startError ? failureText(startError) : missingText;
   const sendWatchdogAlertImpl = dependencies.sendWatchdogAlert || sendWatchdogAlert;
   await sendWatchdogAlertImpl({
     state,
@@ -636,19 +669,31 @@ async function sendWorkerLoopAlert({ startError }, dependencies = {}) {
   });
 }
 
+async function sendWorkerLoopAlert({ startError }, dependencies = {}) {
+  return sendManagedProcessAlert({
+    startError,
+    statePrefix: "worker-loop",
+    failureText: (detail) => `❗ codex 队列 worker 自动拉起失败，需要人工处理：${detail}`,
+    missingText: "⚠️ codex 队列 worker 不在（助手处于运行态），看门狗已请求自动拉起"
+  }, dependencies);
+}
+
+async function sendLocalQueueLoopAlert({ startError }, dependencies = {}) {
+  return sendManagedProcessAlert({
+    startError,
+    statePrefix: "local-queue-loop",
+    failureText: (detail) => `❗ 本地队列 worker 自动拉起失败，需要人工处理：${detail}`,
+    missingText: "⚠️ 本地队列 worker 不在（助手处于运行态），看门狗已请求自动拉起"
+  }, dependencies);
+}
+
 async function sendGameWatcherAlert({ startError }, dependencies = {}) {
-  const state = startError ? "game-watcher-start-failed" : "game-watcher-start-requested";
-  const text = startError
-    ? `❗ 游戏模式 watcher 自动拉起失败，需要人工处理：${startError}`
-    : "⚠️ 游戏模式 watcher 不在（助手处于期望运行态），看门狗已请求自动拉起";
-  const sendWatchdogAlertImpl = dependencies.sendWatchdogAlert || sendWatchdogAlert;
-  await sendWatchdogAlertImpl({
-    state,
-    reason: "process-missing",
-    text,
-    dedupe: true,
-    details: { startError }
-  });
+  return sendManagedProcessAlert({
+    startError,
+    statePrefix: "game-watcher",
+    failureText: (detail) => `❗ 游戏模式 watcher 自动拉起失败，需要人工处理：${detail}`,
+    missingText: "⚠️ 游戏模式 watcher 不在（助手处于期望运行态），看门狗已请求自动拉起"
+  }, dependencies);
 }
 
 async function sendOwnershipAlert({ ownership, stopError }) {
@@ -844,6 +889,21 @@ export async function main(dependencies = {}) {
       appendLogImpl({
         state: "error",
         event: "worker-loop-reconcile-failed",
+        error: errorMessage(error)
+      });
+    } catch {
+      // The bridge reconcile has already completed; an add-on log failure must not affect it.
+    }
+  }
+
+  const ensureLocalQueueLoopRunningImpl = dependencies.ensureLocalQueueLoopRunning || ensureLocalQueueLoopRunning;
+  try {
+    await ensureLocalQueueLoopRunningImpl({ shouldRunLocally: ownership.shouldRunLocally }, dependencies);
+  } catch (error) {
+    try {
+      appendLogImpl({
+        state: "error",
+        event: "local-queue-loop-reconcile-failed",
         error: errorMessage(error)
       });
     } catch {

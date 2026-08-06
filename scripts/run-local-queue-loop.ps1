@@ -1,8 +1,9 @@
-$ErrorActionPreference = "Continue"
+﻿$ErrorActionPreference = "Continue"
 . "$PSScriptRoot\openclaw-env.ps1"
 
 $Root = Split-Path -Parent $PSScriptRoot
 $LogDir = Join-Path $Root "data\logs"
+$RunningFlag = Join-Path $Root "data\assistant-running.flag"
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
 $pollSeconds = 60
@@ -15,6 +16,10 @@ if (Test-Path -Path $envFile) {
 }
 
 while ($true) {
+  if (-not (Test-Path -LiteralPath $RunningFlag)) {
+    break
+  }
+
   try {
     & "$PSScriptRoot\run-local-queue.ps1" *> (Join-Path $LogDir "local-queue-loop.log")
   } catch {

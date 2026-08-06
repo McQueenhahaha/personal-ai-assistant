@@ -4,6 +4,7 @@ import {
   decideGameWatcherAction,
   decideWorkerLoopAction,
   ensureGameWatcherRunning,
+  ensureLocalQueueLoopRunning,
   ensureWorkerLoopRunning,
   main
 } from "../src/telegram/watchdog.mjs";
@@ -220,4 +221,111 @@ test("worker reconcile failure cannot prevent main bridge reconcile", async () =
   assert.equal(result, bridgeResult);
   assert.deepEqual(calls, ["bridge", "worker", "watcher"]);
   assert.equal(logs.at(-1).event, "worker-loop-reconcile-failed");
+});
+
+test("missing running flag never starts the local queue loop", async () => {
+  const unexpectedCall = () => assert.fail("no process check, start, log, or alert expected without the flag");
+
+  const result = await ensureLocalQueueLoopRunning({ shouldRunLocally: "yes" }, {
+    existsSync: () => false,
+    getLocalQueueLoopPids: unexpectedCall,
+    startLocalQueueLoop: unexpectedCall,
+    appendLog: unexpectedCall,
+    sendLocalQueueLoopAlert: unexpectedCall
+  });
+
+  assert.deepEqual(result, {
+    checked: false,
+    started: false,
+    reason: "not-desired"
+  });
+});
+
+test("healthy local queue loop is left alone without logging", async () => {
+  const unexpectedCall = () => assert.fail("no start, log, or alert expected for a healthy process");
+
+  const result = await ensureLocalQueueLoopRunning({ shouldRunLocally: "yes" }, {
+    existsSync: () => true,
+    getLocalQueueLoopPids: () => [404],
+    startLocalQueueLoop: unexpectedCall,
+    appendLog: unexpectedCall,
+    sendLocalQueueLoopAlert: unexpectedCall
+  });
+
+  assert.deepEqual(result, {
+    checked: true,
+    started: false,
+    reason: "healthy"
+  });
+});
+
+test("missing local queue loop starts when the local node holds the brain lease", async () => {
+  let startCalls = 0;
+  let alertCalls = 0;
+  const logs = [];
+
+  const result = await ensureLocalQueueLoopRunning({ shouldRunLocally: "yes" }, {
+    existsSync: () => true,
+    getLocalQueueLoopPids: () => [],
+    startLocalQueueLoop: () => { startCalls += 1; },
+    appendLog: (entry) => logs.push(entry),
+    sendLocalQueueLoopAlert: async ({ startError }) => {
+      assert.equal(startError, null);
+      alertCalls += 1;
+    }
+  });
+
+  assert.equal(startCalls, 1);
+  assert.equal(alertCalls, 1);
+  assert.deepEqual(logs.map((entry) => entry.event), [
+    "local-queue-loop-start-requested",
+    "local-queue-loop-start-dispatched"
+  ]);
+  assert.deepEqual(result, {
+    checked: true,
+    started: true,
+    reason: "local-queue-loop-start-requested"
+  });
+});
+
+test("peer-held lease blocks the local queue loop before checking its process", async () => {
+  const unexpectedCall = () => assert.fail("no process check, start, log, or alert expected for a peer-held lease");
+
+  const result = await ensureLocalQueueLoopRunning({ shouldRunLocally: "no" }, {
+    existsSync: () => true,
+    getLocalQueueLoopPids: unexpectedCall,
+    startLocalQueueLoop: unexpectedCall,
+    appendLog: unexpectedCall,
+    sendLocalQueueLoopAlert: unexpectedCall
+  });
+
+  assert.deepEqual(result, {
+    checked: false,
+    started: false,
+    reason: "not-local-brain"
+  });
+});
+
+test("local queue loop start failure is logged and alerted without escaping", async () => {
+  const logs = [];
+  const alerts = [];
+
+  const result = await ensureLocalQueueLoopRunning({ shouldRunLocally: "yes" }, {
+    existsSync: () => true,
+    getLocalQueueLoopPids: () => [],
+    startLocalQueueLoop: () => { throw new Error("local queue boom"); },
+    appendLog: (entry) => logs.push(entry),
+    sendWatchdogAlert: async (alert) => { alerts.push(alert); }
+  });
+
+  assert.deepEqual(result, {
+    checked: true,
+    started: false,
+    reason: "local-queue-loop-start-failed"
+  });
+  assert.equal(logs.at(-1).event, "local-queue-loop-start-failed");
+  assert.equal(alerts.length, 1);
+  assert.equal(alerts[0].state, "local-queue-loop-start-failed");
+  assert.equal(alerts[0].dedupe, true);
+  assert.match(alerts[0].text, /local queue boom/);
 });
