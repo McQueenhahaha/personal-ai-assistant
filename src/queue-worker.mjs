@@ -2,6 +2,7 @@ import { pathToFileURL } from "node:url";
 import { loadEnv } from "./env.mjs";
 import { generateWithOllama } from "./local-ai.mjs";
 import { claimTask, ensureQueue, listPendingTasks, readTask, writeFailure, writeResult } from "./queue.mjs";
+import { isPaused } from "./state/pause.mjs";
 import { sendTelegramMessage } from "./telegram.mjs";
 
 function buildPrompt(task) {
@@ -20,6 +21,12 @@ function buildPrompt(task) {
 
 export async function processLocalQueue({ notify = true } = {}) {
   loadEnv();
+
+  if (isPaused()) {
+    console.log("[local-queue-worker] 已暂停，跳过本轮任务处理。");
+    return [];
+  }
+
   const inboxPath = process.env.LOCAL_QUEUE_INBOX || "./data/queues/local/inbox";
   ensureQueue(inboxPath);
   const pending = listPendingTasks(inboxPath);
