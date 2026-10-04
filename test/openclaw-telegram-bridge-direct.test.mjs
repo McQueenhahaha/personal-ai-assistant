@@ -186,3 +186,93 @@ test("runDirectMode does not write an offset when the initial baseline fetch is 
   assert.equal(heartbeat.offset, -1);
   assert.equal(heartbeat.lastUpdates, 0);
 });
+
+function conflictFetcher(conflictCount) {
+  const state = { calls: 0 };
+  state.fetchUpdatesImpl = async () => {
+    state.calls += 1;
+    if (state.calls <= conflictCount) {
+      throw new Error("Telegram HTTP request failed 409: Conflict: terminated by other getUpdates request");
+    }
+    return [];
+  };
+  return state;
+}
+
+test("Mac 连续 409 时让出轮询：脑裂下只留 Windows 一个在拉消息，告警只发一次", async (t) => {
+  const files = makeFiles(t);
+  const fetcher = conflictFetcher(20);
+  const sleeps = [];
+  const alerts = [];
+
+  await runDirectMode({
+    token: "test-token",
+    chatId: "123",
+    ...files,
+    dryRun: true,
+    processExisting: false,
+    once: true,
+    retrySeconds: 0,
+    failureWarnThreshold: 5,
+    logger: quietLogger(),
+    fetchUpdatesImpl: fetcher.fetchUpdatesImpl,
+    selfId: "mac",
+    sleep: async (ms) => { sleeps.push(ms); },
+    sendAlert: async (text) => { alerts.push(text); }
+  });
+
+  assert.equal(fetcher.calls, 21);
+  assert.deepEqual(sleeps, [600_000, 600_000]);
+  assert.equal(alerts.length, 1);
+  assert.match(alerts[0], /让出/);
+});
+
+test("Windows 是优先方，再多 409 也不让出", async (t) => {
+  const files = makeFiles(t);
+  const fetcher = conflictFetcher(12);
+
+  await runDirectMode({
+    token: "test-token",
+    chatId: "123",
+    ...files,
+    dryRun: true,
+    processExisting: false,
+    once: true,
+    retrySeconds: 0,
+    failureWarnThreshold: 5,
+    logger: quietLogger(),
+    fetchUpdatesImpl: fetcher.fetchUpdatesImpl,
+    selfId: "windows",
+    sleep: async () => assert.fail("Windows must never yield"),
+    sendAlert: async () => assert.fail("Windows must never yield")
+  });
+
+  assert.equal(fetcher.calls, 13);
+});
+
+test("409 之间夹着别的错误就不算连续，不触发让出", async (t) => {
+  const files = makeFiles(t);
+  let calls = 0;
+
+  await runDirectMode({
+    token: "test-token",
+    chatId: "123",
+    ...files,
+    dryRun: true,
+    processExisting: false,
+    once: true,
+    retrySeconds: 0,
+    failureWarnThreshold: 50,
+    logger: quietLogger(),
+    fetchUpdatesImpl: async () => {
+      calls += 1;
+      if (calls > 18) return [];
+      throw new Error(calls % 2 ? "Telegram HTTP request failed 409: Conflict" : "socket hang up");
+    },
+    selfId: "mac",
+    sleep: async () => assert.fail("interleaved errors are not a split brain"),
+    sendAlert: async () => assert.fail("interleaved errors are not a split brain")
+  });
+
+  assert.equal(calls, 19);
+});

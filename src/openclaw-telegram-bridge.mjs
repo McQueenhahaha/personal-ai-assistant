@@ -26,6 +26,9 @@ const DEFAULT_STATE_FILE = "./data/state/openclaw-telegram-bridge-state.json";
 const DEFAULT_UPDATE_OFFSET_FILE = "./data/state/telegram-update-offset.json";
 const DEFAULT_DIRECT_HEARTBEAT_FILE = "./data/state/telegram-direct-heartbeat.json";
 const DEFAULT_LEASE_FILE = "./data/state/brain-lease.json";
+// 正常交接时旧长轮询还挂着，偶发一两次 409；脑裂时 Mac 约每 3 秒一次，10 次约半分钟。
+const YIELD_AFTER_CONFLICTS = 10;
+const YIELD_MS = 10 * 60_000;
 // main() 启动时记一次，供 /status 显示「正在跑的是哪一版」。
 let runningCodeVersion = null;
 const MAINTENANCE_ACTIONS = [
@@ -848,12 +851,17 @@ export async function runDirectMode({
   fetchUpdatesImpl = fetchUpdates,
   processMessagesImpl = processMessageList,
   heartbeatMs = 60000,
-  logger = console
+  logger = console,
+  selfId,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  sendAlert = (text) => send(token, chatId, text, dryRun)
 }) {
   const savedOffset = readUpdateOffset(offsetFile, logger);
   let skipHistorical = savedOffset == null && !processExisting;
   let offset = savedOffset ?? (skipHistorical ? -1 : 0);
   let consecutiveFailures = 0;
+  let consecutiveConflicts = 0;
+  let yieldAlerted = false;
   let emptyPolls = 0;
 
   // 心跳原先只在每轮轮询开始时写一次。一批里若落进两条重命令
@@ -879,11 +887,33 @@ export async function runDirectMode({
     try {
       updates = await fetchUpdatesImpl({ token, offset });
       consecutiveFailures = 0;
+      consecutiveConflicts = 0;
     } catch (error) {
       consecutiveFailures += 1;
+      consecutiveConflicts = /\b409\b/.test(error?.message) ? consecutiveConflicts + 1 : 0;
       logger.error(`Telegram 直连拉取失败（连续 ${consecutiveFailures} 次）：\n${errorDetails(error)}`);
       if (consecutiveFailures === failureWarnThreshold) {
         logger.warn(`[Telegram 直连严重警告] getUpdates 已连续失败 ${failureWarnThreshold} 次，请检查网络和 Bot 状态。`);
+      }
+      // 脑裂兜底：Tailscale 分区时租约经 SSH 同步不了，两边都以为对方挂了、都在拉，
+      // 互相 409 踢掉，消息被随机一方吞掉（2026-10-03 一整天）。Windows 是优先方，
+      // 所以由 Mac 让出：停一段时间再试 —— Windows 真挂了的话，下次就拉得到、自然接管。
+      // 分区恢复后 Mac 的 supervisor 会转待机并杀掉本进程，所以告警每个进程只发一次。
+      if (selfId === "mac" && consecutiveConflicts >= YIELD_AFTER_CONFLICTS) {
+        logger.warn(`连续 ${consecutiveConflicts} 次 409，判定与 Windows 脑裂，Mac 让出轮询 ${YIELD_MS / 60_000} 分钟。`);
+        if (!yieldAlerted) {
+          yieldAlerted = true;
+          try {
+            await sendAlert(`⚠️ Mac 的助手桥连续 ${consecutiveConflicts} 次收到 409：Windows 也在拉消息，`
+              + "多半是 Mac 的 Tailscale 掉线、两边都以为对方挂了（脑裂）。Mac 已让出 Telegram 轮询，消息由 Windows 处理；"
+              + `之后每 ${YIELD_MS / 60_000} 分钟重试一次，Windows 真挂了 Mac 会在那时接管。`);
+          } catch (alertError) {
+            logger.warn(`脑裂让出告警发送失败：${alertError.message || String(alertError)}`);
+          }
+        }
+        consecutiveConflicts = 0;
+        await sleep(YIELD_MS);
+        continue;
       }
       await new Promise((resolve) => setTimeout(resolve, retrySeconds * 1000));
       continue;
@@ -1004,7 +1034,8 @@ async function main() {
       once,
       retrySeconds: pollSeconds,
       failureWarnThreshold,
-      idleLogEvery
+      idleLogEvery,
+      selfId: resolveNodeId(process.env, process.platform)
     });
     return;
   }
