@@ -12,8 +12,12 @@ Set-Location $Root
 $backoffSeconds = 2
 while ($true) {
   $startedAt = [DateTimeOffset]::UtcNow
+  # PS 5.1: with "Stop", the first stderr line from node (redirected) becomes a
+  # terminating NativeCommandError that kills node and this loop. Relax it here.
+  $ErrorActionPreference = "Continue"
   & node .\src\brain\supervisor.mjs @args
   $exitCode = $LASTEXITCODE
+  $ErrorActionPreference = "Stop"
   $ranSeconds = ([DateTimeOffset]::UtcNow - $startedAt).TotalSeconds
   $restart = Get-BridgeRestartState `
     -CurrentBackoffSeconds $backoffSeconds `
