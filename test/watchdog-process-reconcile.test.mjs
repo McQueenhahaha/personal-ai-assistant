@@ -210,6 +210,10 @@ test("worker reconcile failure cannot prevent main bridge reconcile", async () =
       calls.push("bridge");
       return bridgeResult;
     },
+    checkBridgeHealth: async () => {
+      calls.push("health");
+      throw new Error("health check boom");
+    },
     ensureWorkerLoopRunning: async () => {
       calls.push("worker");
       throw new Error("worker reconcile boom");
@@ -219,8 +223,31 @@ test("worker reconcile failure cannot prevent main bridge reconcile", async () =
   });
 
   assert.equal(result, bridgeResult);
-  assert.deepEqual(calls, ["bridge", "worker", "watcher"]);
+  assert.deepEqual(calls, ["bridge", "health", "worker", "watcher"]);
+  assert.equal(logs[0].event, "bridge-health-check-failed");
+  assert.equal("state" in logs[0], false, "must not disturb readLastLoggedState");
   assert.equal(logs.at(-1).event, "worker-loop-reconcile-failed");
+});
+
+test("bridge health is only judged on the node that should run the bridge", async () => {
+  const result = await main({
+    loadEnv: () => {},
+    env: { PEER_TAILSCALE_IP: "100.64.0.2" },
+    ensureSupervisorRunning: async () => {},
+    now: () => NOW_MS,
+    readBrainLease: () => ({ holder: "mac", heartbeatAt: new Date(NOW_MS).toISOString(), ttlSeconds: 90, reason: "renew" }),
+    resolveNodeId: () => "windows",
+    readHeartbeat: () => null,
+    getBridgePids: () => [],
+    reconcileBridgeOwnership: async ({ ownership }) => ({ restart: false, reason: ownership.reason }),
+    checkBridgeHealth: async () => assert.fail("a standby node must not judge a bridge it does not run"),
+    ensureWorkerLoopRunning: async () => {},
+    ensureLocalQueueLoopRunning: async () => {},
+    ensureGameWatcherRunning: async () => {},
+    appendLog: () => {}
+  });
+
+  assert.equal(result.reason, "peer-holds-lease");
 });
 
 test("missing running flag never starts the local queue loop", async () => {

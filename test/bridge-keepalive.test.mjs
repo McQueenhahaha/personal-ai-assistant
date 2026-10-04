@@ -53,6 +53,7 @@ test("bridge runner wires args and UTF-8 restart-only logging into its loop", ()
   assert.match(script, /\$ErrorActionPreference = "Continue"\s*\n\s*& node \.\\src\\openclaw-telegram-bridge\.mjs/);
   assert.match(script, /Get-BridgeRestartState/);
   assert.match(script, /bridge-keepalive\.log/);
+  assert.match(script, /\$env:PAI_LOG_FILE = Join-Path \$LogDir "openclaw-telegram-bridge\.jsonl"/);
   assert.match(script, /UTF8Encoding/);
   assert.match(script, /AppendAllText/);
 });
@@ -68,6 +69,7 @@ test("brain supervisor runner reuses bridge backoff with UTF-8 restart-only logg
   assert.match(script, /\$ErrorActionPreference = "Continue"\s*\n\s*& node \.\\src\\brain\\supervisor\.mjs/);
   assert.match(script, /Get-BridgeRestartState/);
   assert.match(script, /brain-supervisor-keepalive\.log/);
+  assert.match(script, /\$env:PAI_LOG_FILE = Join-Path \$LogDir "brain-supervisor\.jsonl"/);
   assert.match(script, /UTF8Encoding/);
   assert.match(script, /AppendAllText/);
 });

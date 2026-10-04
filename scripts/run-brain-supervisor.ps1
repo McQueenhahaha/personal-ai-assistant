@@ -5,6 +5,9 @@ Import-Module "$PSScriptRoot\bridge-keepalive.psm1" -Force
 $Root = Split-Path -Parent $PSScriptRoot
 $LogDir = Join-Path $Root "data\logs"
 $KeepaliveLog = Join-Path $LogDir "brain-supervisor-keepalive.log"
+# node writes its own UTF-8 JSONL here (src/logging.mjs); the redirects in the
+# start script only catch output from before logging is installed.
+$env:PAI_LOG_FILE = Join-Path $LogDir "brain-supervisor.jsonl"
 $Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 Set-Location $Root

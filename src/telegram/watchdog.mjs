@@ -6,6 +6,7 @@ import { isLeaseFresh, isLeaseValid } from "../brain/lease.mjs";
 import { resolveNodeId } from "../brain/supervisor.mjs";
 import { loadEnv, resolveFromCwd } from "../env.mjs";
 import { sendTelegramMessage } from "../telegram.mjs";
+import { checkBridgeHealth } from "./bridge-health.mjs";
 
 export const DEFAULT_STALE_MS = 900_000;
 
@@ -881,6 +882,19 @@ export async function main(dependencies = {}) {
   }, dependencies);
 
   const appendLogImpl = dependencies.appendLog || appendLog;
+  if (ownership.shouldRunLocally === "yes") {
+    const checkBridgeHealthImpl = dependencies.checkBridgeHealth || checkBridgeHealth;
+    try {
+      await checkBridgeHealthImpl({ nowMs }, { appendLog: appendLogImpl });
+    } catch (error) {
+      try {
+        appendLogImpl({ event: "bridge-health-check-failed", error: errorMessage(error) });
+      } catch {
+        // The bridge reconcile has already completed; an add-on log failure must not affect it.
+      }
+    }
+  }
+
   const ensureWorkerLoopRunningImpl = dependencies.ensureWorkerLoopRunning || ensureWorkerLoopRunning;
   try {
     await ensureWorkerLoopRunningImpl({ shouldRunLocally: ownership.shouldRunLocally }, dependencies);

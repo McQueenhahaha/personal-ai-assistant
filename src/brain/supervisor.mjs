@@ -13,6 +13,7 @@ import {
 import { pullSoul, pushSoul, readSoulLease } from "./soul-sync.mjs";
 import { macSatelliteHealth } from "../satellite/mac.mjs";
 import { loadEnv, timestampForFile } from "../env.mjs";
+import { installFileLogging } from "../logging.mjs";
 
 const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const LEASE_FILE = path.join(REPO_ROOT, "data", "state", "brain-lease.json");
@@ -495,6 +496,7 @@ export async function runSupervisor({ once = false } = {}, dependencies = {}) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  if (process.env.PAI_LOG_FILE) installFileLogging(process.env.PAI_LOG_FILE);
   // 退出时必须把自己拉起来的桥一起带走。
   //
   // 正常的角色切换不需要这个 —— 变成卫星那条路本来就会调 ensureBrainServices(false)。

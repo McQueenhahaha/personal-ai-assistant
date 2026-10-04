@@ -22,6 +22,8 @@ const INTERNAL_ONLY = new Set([
   "OPENCLAW_TELEGRAM_BRIDGE_STATE_FILE",
   "CLAUDE_TEST_ARGS_FILE",
   "OPENCLAW_TELEGRAM_MESSAGES_FILE",
+  // 由 run-*.ps1 在启动时设置，指向 node 自写的 JSONL 日志。
+  "PAI_LOG_FILE",
   // 这两个由 sshd 注入，windows-agent 读它们判断来源 —— 不是用户配置项。
   "SSH_CLIENT",
   "SSH_CONNECTION",

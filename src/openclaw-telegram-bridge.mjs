@@ -15,11 +15,18 @@ import { fetchUpdates, nextOffset, parseUpdates } from "./telegram/updates.mjs";
 import { readPauseState, writePauseState } from "./state/pause.mjs";
 import { requestCancel } from "./state/cancel.mjs";
 import { readInFlight } from "./state/in-flight.mjs";
+import { installFileLogging } from "./logging.mjs";
+import { loadLease } from "./brain/lease.mjs";
+import { defaultBridgeLogFile, formatHealthLines, readBridgeLogSummary } from "./telegram/bridge-health.mjs";
+import { readCodeVersion } from "./version.mjs";
 
 const DEFAULT_MESSAGE_FILE = "./.openclaw/state/agents/main/sessions/sessions.json.telegram-messages.json";
 const DEFAULT_STATE_FILE = "./data/state/openclaw-telegram-bridge-state.json";
 const DEFAULT_UPDATE_OFFSET_FILE = "./data/state/telegram-update-offset.json";
 const DEFAULT_DIRECT_HEARTBEAT_FILE = "./data/state/telegram-direct-heartbeat.json";
+const DEFAULT_LEASE_FILE = "./data/state/brain-lease.json";
+// main() 启动时记一次，供 /status 显示「正在跑的是哪一版」。
+let runningCodeVersion = null;
 const MAINTENANCE_ACTIONS = [
   "dism-restorehealth",
   "dism-scanhealth",
@@ -193,12 +200,20 @@ export async function summarizeStatus(dependencies = {}) {
     pausedAt: pauseState.at,
     timeZone: env.SCHOOL_TIMEZONE || env.DIGEST_TIMEZONE || "Australia/Melbourne"
   });
+  const nowMs = (dependencies.now || Date.now)();
+  const healthLines = formatHealthLines({
+    lease: await (dependencies.loadLease || loadLease)(dependencies.leaseFile || resolveFromCwd(DEFAULT_LEASE_FILE)),
+    nowMs,
+    bridgeLog: (dependencies.readBridgeLogSummary || readBridgeLogSummary)(defaultBridgeLogFile(), nowMs),
+    codeVersion: dependencies.codeVersion !== undefined ? dependencies.codeVersion : runningCodeVersion
+  });
 
   return [
     ...(pausedNotice ? [pausedNotice, ""] : []),
     "AI 助手状态",
     "",
     `当前运行节点：${selfLabel}`,
+    ...healthLines,
     "",
     flags,
     "",
@@ -935,6 +950,8 @@ async function main() {
   console.log(`当前模式：${directMode ? "Telegram 直连模式" : "OpenClaw 文件模式"}`);
   await registerOwnerCommandMenu(token, chatId, dryRun);
   console.log("OpenClaw Telegram bridge started.");
+  runningCodeVersion = await readCodeVersion();
+  console.log(`代码版本：${runningCodeVersion ?? "未知"}`);
   if (directMode) {
     await runDirectMode({
       token,
@@ -961,6 +978,7 @@ async function main() {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  if (process.env.PAI_LOG_FILE) installFileLogging(process.env.PAI_LOG_FILE);
   main().catch((error) => {
     if (boolEnv("TELEGRAM_DIRECT_MODE", true)) {
       console.error(`[FATAL] 直连模式异常退出\n${errorDetails(error)}`);

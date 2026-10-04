@@ -12,6 +12,9 @@ function statusDependencies(selfId, remoteOnline) {
     existsSync: () => false,
     ensureQueue() {},
     listPendingTasks: () => [],
+    loadLease: async () => null,
+    readBridgeLogSummary: () => null,
+    codeVersion: null,
     probes: {
       [selfId]: async () => {
         throw new Error("summarizeStatus must not probe itself");
@@ -39,4 +42,22 @@ test("summarizeStatus keeps every current Windows capability locally available",
   assert.match(status, /文件 \/ Codex \/ Canvas \/ 图形操控：可用（本机）/);
   assert.match(status, /浏览器 \/ 屏幕查看 \/ Outlook \/ 系统维护：可用（本机）/);
   assert.doesNotMatch(status, /这台 Windows 电脑[^\n]*离线/);
+});
+
+test("summarizeStatus shows the health block right under the running node", async () => {
+  const nowMs = Date.parse("2026-10-04T06:00:00.000Z");
+  const status = await summarizeStatus({
+    ...statusDependencies("windows", true),
+    now: () => nowMs,
+    loadLease: async () => ({ holder: "windows", heartbeatAt: new Date(nowMs - 5_000).toISOString(), ttlSeconds: 90, reason: "renew" }),
+    readBridgeLogSummary: () => ({ conflicts: 12, starts: 1, lastError: "Error: Telegram HTTP request failed 409" }),
+    codeVersion: "622fb5c"
+  });
+  const lines = status.split("\n");
+  const nodeLine = lines.indexOf("当前运行节点：这台 Windows 电脑");
+
+  assert.equal(lines[nodeLine + 1], "大脑：Windows（租约心跳 5 秒前）");
+  assert.match(lines[nodeLine + 2], /^桥：.*12 次 Telegram 409 冲突/);
+  assert.equal(lines[nodeLine + 3], "最近错误：Error: Telegram HTTP request failed 409");
+  assert.equal(lines[nodeLine + 4], "代码版本：622fb5c");
 });
