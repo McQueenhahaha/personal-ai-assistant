@@ -106,8 +106,6 @@ export async function runSchoolCheckCli() {
     return;
   }
 
-  console.log(formatConfigReport(reportConfig()));
-
   const now = new Date();
   const dryRun = hasArg("--dry-run");
   const forceSchool = hasArg("--force-school") || hasArg("--school");
@@ -149,6 +147,10 @@ export async function runSchoolCheckCli() {
   state.lastOutlookAlertAt ||= null;
   state.lastDigestKey ||= null;
   state.lastDigestSentAt ||= null;
+
+  // 打印放在 state 之后：学校邮件那行要读 outlookFailStreak 才能反映真实结果，
+  // 否则 Outlook 早就连不上了它还一直显示「已配置 ✓」。
+  console.log(formatConfigReport(reportConfig(process.env, state)));
 
   const slots = dueSlots({ now, timeZone, times, graceMinutes, state });
   const gameSlots = dueSlots({ now, timeZone, times: gameNewsTimes, graceMinutes, state });

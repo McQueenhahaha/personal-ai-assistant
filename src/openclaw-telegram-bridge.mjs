@@ -279,6 +279,44 @@ export function runPowerShell(script, args = [], timeoutMs = 180000) {
   });
 }
 
+/**
+ * 把 school-check 的 stdout 翻成人话。
+ *
+ * 原先 /school、/mail、/game 是把脚本 stdout **整段**回灌给用户 —— 里面是
+ * 「[config] ...」自检行加一坨 JSON，而真正的邮件内容是脚本自己另发的。
+ * 于是没有新邮件时，用户收到的就只有那坨日志，看着像出了错。
+ *
+ * 最后一行刻意在「没有新内容」时也明说：静默和故障长得一模一样，
+ * 让用户自己去猜「是没新邮件还是又坏了」，正是本仓反复在消灭的那类失败。
+ *
+ * 认不出结构（/digest 走的是另一个脚本）就返回 null，由调用方退回原输出，
+ * 不能因为格式变了把命令回执整个吞掉。
+ */
+export function summarizeSchoolCheck(output) {
+  const match = String(output ?? "").match(/\{[\s\S]*\}\s*$/);
+  if (!match) return null;
+  let data;
+  try {
+    data = JSON.parse(match[0]);
+  } catch {
+    return null;
+  }
+  if (!data || typeof data !== "object" || typeof data.telegramMessagesSent !== "number") return null;
+
+  const num = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0);
+  const lines = [
+    `学校邮件：${num(data.messages)} 封 · 新提醒 ${num(data.remindersSent)}`,
+    `个人邮件：${num(data.personalMessages)} 封 · 新推送 ${num(data.personalUpdatesSent)}`,
+    `游戏资讯：${num(data.gameItems)} 条 · 新推送 ${num(data.gameUpdatesSent)}`
+  ];
+  if (data.schoolExportError) lines.push(`⚠️ 学校邮件导出失败：${String(data.schoolExportError).slice(0, 200)}`);
+  if (data.personalExportError) lines.push(`⚠️ 个人邮件导出失败：${String(data.personalExportError).slice(0, 200)}`);
+
+  const sent = num(data.telegramMessagesSent);
+  lines.push(sent > 0 ? `已推送 ${sent} 条。` : "没有新内容，本次未推送。");
+  return lines.join("\n");
+}
+
 async function registerOwnerCommandMenu(token, chatId, dryRun) {
   if (dryRun) {
     console.log(`[dry-run setMyCommands chat ${chatId}] ${OWNER_COMMAND_MENU.map(({ command }) => command).join(", ")}`);
@@ -718,7 +756,7 @@ export async function handleCommand({ token, chatId, text, dryRun }) {
     const [script, args] = commandMap[command];
     await send(token, chatId, `${command} 已收到，正在执行。`, dryRun);
     const output = await runPowerShell(script, args);
-    await send(token, chatId, output, dryRun);
+    await send(token, chatId, summarizeSchoolCheck(output) || output, dryRun);
     return true;
   }
 

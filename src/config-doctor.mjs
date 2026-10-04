@@ -18,7 +18,19 @@ function fallbackStatus(env) {
     : "OpenAI fallback 未配置";
 }
 
-export function reportConfig(env = process.env) {
+/**
+ * `state` 可选：传入 school-check 的运行状态后，学校邮件那行才会反映**真实**结果
+ * 而不只是「.env 填了没」。不传则退化成纯配置检查（index.mjs 就是这么调的）。
+ *
+ * 为什么需要它（2026-08-21 实测）：Outlook 走 COM，重装系统后没装桌面版 Office，
+ * COM 直接 REGDB_E_CLASSNOTREG，学校邮件从 8-18 起再没进来过。可这一行始终显示
+ * 「已配置 ✓」—— 因为它只看 SCHOOL_CHECK_TIMES 填没填。用户盯着一片绿，
+ * 而真实故障被盖了两天。这正是下面 outlookFailStreak 那条注释警告的情形：
+ * 「读不出来」和「确实没有新邮件」长得一模一样。
+ */
+export function reportConfig(env = process.env, state = null) {
+  const outlookFailStreak = Number(state?.outlookFailStreak) || 0;
+  const lastOutlookExportAt = state?.lastOutlookExportAt || null;
   const telegramReady = Boolean(envText(env, "TELEGRAM_BOT_TOKEN") && envText(env, "TELEGRAM_CHAT_ID"));
   const localModel = envText(env, "LOCAL_MODEL");
   const aiReady = envFlag(env, "ENABLE_AI_DIGEST") && Boolean(localModel);
@@ -42,8 +54,12 @@ export function reportConfig(env = process.env) {
     },
     {
       feature: "学校邮件(Outlook)",
-      ok: schoolTimesReady,
-      detail: schoolTimesReady ? `已配置 ✓，drop dir ${schoolDropDir}` : "未配置定时学校检查"
+      ok: schoolTimesReady && outlookFailStreak === 0,
+      detail: !schoolTimesReady
+        ? "未配置定时学校检查"
+        : outlookFailStreak > 0
+          ? `导出失败 ${outlookFailStreak} 次 ✗，最后成功：${lastOutlookExportAt || "从未"}`
+          : `已配置 ✓，drop dir ${schoolDropDir}`
     },
     {
       feature: "个人邮件(Gmail)",
