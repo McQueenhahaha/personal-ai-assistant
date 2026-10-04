@@ -33,10 +33,25 @@ try {
 #   $_ | Out-File -FilePath (Join-Path $LogDir "start-openclaw.err.log") -Append
 # }
 
-try {
-  & "$PSScriptRoot\start-openclaw-telegram-bridge-hidden.ps1" *> (Join-Path $LogDir "start-openclaw-telegram-bridge.log")
-} catch {
-  $_ | Out-File -FilePath (Join-Path $LogDir "start-openclaw-telegram-bridge.err.log") -Append
+# 桥只在【持有大脑租约的那台机器】上启动。Telegram getUpdates 是单消费者语义：
+# 待命节点抢轮询会让持有方收到 409 Conflict，消息被随机一方吞掉且不留痕迹
+# —— 与上面 gateway 退休那段注释是同一个故障，只是换成了跨节点复发。
+# 本机该不该跑桥由 supervisor 的 ensureBrainServices 负责收敛，这里只要不抢跑。
+# 判定逻辑集中在 src/state/brain-guard.mjs（无租约/租约过期都放行，不切断 HA 路径）。
+Push-Location $Root
+& node .\src\state\brain-guard.mjs | Out-Null
+$BridgeGuardExit = $LASTEXITCODE
+Pop-Location
+
+if ($BridgeGuardExit -eq 0) {
+  try {
+    & "$PSScriptRoot\start-openclaw-telegram-bridge-hidden.ps1" *> (Join-Path $LogDir "start-openclaw-telegram-bridge.log")
+  } catch {
+    $_ | Out-File -FilePath (Join-Path $LogDir "start-openclaw-telegram-bridge.err.log") -Append
+  }
+} else {
+  $msg = "[" + (Get-Date -Format o) + "] Skipped bridge start: this node does not hold the brain lease."
+  $msg | Out-File -FilePath (Join-Path $LogDir "bridge-skipped-not-brain.log") -Append -Encoding UTF8
 }
 
 try {

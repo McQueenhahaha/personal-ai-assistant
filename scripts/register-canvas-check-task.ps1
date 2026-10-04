@@ -15,12 +15,19 @@ $Triggers = foreach ($Time in $Times) {
   New-ScheduledTaskTrigger -Daily -At $Time
 }
 $Principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
+$Settings = New-ScheduledTaskSettingsSet `
+  -AllowStartIfOnBatteries `
+  -DontStopIfGoingOnBatteries `
+  -StartWhenAvailable `
+  -MultipleInstances IgnoreNew `
+  -ExecutionTimeLimit (New-TimeSpan -Minutes 15)
 
 Register-ScheduledTask `
   -TaskName $TaskName `
   -Action $Action `
   -Trigger $Triggers `
   -Principal $Principal `
+  -Settings $Settings `
   -Description "Check Canvas assignment due dates and send Telegram reminders." `
   -Force
 

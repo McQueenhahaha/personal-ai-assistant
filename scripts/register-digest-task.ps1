@@ -13,12 +13,19 @@ $Action = New-ScheduledTaskAction `
 
 $Trigger = New-ScheduledTaskTrigger -Daily -At $Time
 $Principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
+$Settings = New-ScheduledTaskSettingsSet `
+  -AllowStartIfOnBatteries `
+  -DontStopIfGoingOnBatteries `
+  -StartWhenAvailable `
+  -MultipleInstances IgnoreNew `
+  -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
 
 Register-ScheduledTask `
   -TaskName $TaskName `
   -Action $Action `
   -Trigger $Trigger `
   -Principal $Principal `
+  -Settings $Settings `
   -Description "Send the personal AI digest to Telegram." `
   -Force
 
