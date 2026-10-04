@@ -47,6 +47,25 @@ export function decideRole({
     };
   }
 
+  // Windows 是主力：Mac 只是它离开期间的接力，不该在它回来后继续占着大脑。
+  //
+  // 为什么需要它（2026-08-21 实测的真实故障）：没有这条规则，大脑一旦交给 Mac
+  // 就再也回不来 —— 只要 Mac 还在续租，租约就永远新鲜，Windows 会无限期待机。
+  // 2026-08-19 重装后就这样卡了两天，症状是 /digest、/school 这些命令回
+  // 「spawn powershell.exe ENOENT」：命令要跑 .ps1，而大脑在没有 PowerShell 的
+  // Mac 上。handover 只有「交出去」这一半，收回的那一半此前根本不存在。
+  //
+  // 规则刻意是**单向的**：Mac 侧看到 Windows 持有新鲜租约仍旧走下面的 standby，
+  // 所以两边不会来回抢。交接也不受影响 —— handover 保留 holder 不变，
+  // 那种情形在上面的 self-holds-lease 分支就返回了，走不到这里。
+  if (selfId === "windows" && isLeaseFresh(lease, nowMs)) {
+    return {
+      role: "brain",
+      action: "takeover",
+      reason: "windows-preferred-reclaim"
+    };
+  }
+
   if (isLeaseFresh(lease, nowMs)) {
     return {
       role: "satellite",

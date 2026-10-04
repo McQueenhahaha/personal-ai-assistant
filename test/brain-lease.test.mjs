@@ -61,10 +61,12 @@ test("decideRole: self-held lease renews brain even when expired", () => {
   });
 });
 
+// 待命规则从 Mac 视角验证：Windows 侧现在由 windows-preferred-reclaim 接管，
+// 待命这条路只剩 Mac 会走。
 test("decideRole: fresh peer lease stands by as satellite", () => {
   assert.deepEqual(decideRole({
-    lease: lease(),
-    selfId: "windows",
+    lease: lease({ holder: "windows" }),
+    selfId: "mac",
     nowMs: NOW,
     peerReachable: false,
     unreachableStreak: 10
@@ -73,6 +75,43 @@ test("decideRole: fresh peer lease stands by as satellite", () => {
     action: "standby",
     reason: "peer-lease-fresh"
   });
+});
+
+// 大脑一旦交给 Mac 就回不来，是 2026-08-19 重装后卡了两天的那个故障。
+test("decideRole: windows reclaims the brain from a fresh mac lease", () => {
+  assert.deepEqual(decideRole({
+    lease: lease(),
+    selfId: "windows",
+    nowMs: NOW,
+    peerReachable: true,
+    unreachableStreak: 0
+  }), {
+    role: "brain",
+    action: "takeover",
+    reason: "windows-preferred-reclaim"
+  });
+});
+
+// 单向性：Mac 不会反过来抢 Windows，否则两边会来回切。
+test("decideRole: mac never reclaims from a fresh windows lease", () => {
+  assert.equal(decideRole({
+    lease: lease({ holder: "windows" }),
+    selfId: "mac",
+    nowMs: NOW,
+    peerReachable: true,
+    unreachableStreak: 0
+  }).action, "standby");
+});
+
+// 交接不受影响：handover 保留 holder 不变，走 self-holds-lease 分支。
+test("decideRole: windows keeps renewing its own handed-over lease", () => {
+  assert.equal(decideRole({
+    lease: lease({ holder: "windows", heartbeatAt: new Date(NOW - 91000).toISOString(), reason: "handover" }),
+    selfId: "windows",
+    nowMs: NOW,
+    peerReachable: true,
+    unreachableStreak: 0
+  }).action, "renew");
 });
 
 test("decideRole: expired peer lease takes over when peer is reachable", () => {
