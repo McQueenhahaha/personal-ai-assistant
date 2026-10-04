@@ -7,6 +7,7 @@ import { resolveNodeId } from "../brain/supervisor.mjs";
 import { loadEnv, resolveFromCwd } from "../env.mjs";
 import { sendTelegramMessage } from "../telegram.mjs";
 import { checkBridgeHealth } from "./bridge-health.mjs";
+import { checkPeerVersion } from "../brain/peer-version.mjs";
 
 export const DEFAULT_STALE_MS = 900_000;
 
@@ -892,6 +893,17 @@ export async function main(dependencies = {}) {
       } catch {
         // The bridge reconcile has already completed; an add-on log failure must not affect it.
       }
+    }
+  }
+
+  const checkPeerVersionImpl = dependencies.checkPeerVersion || checkPeerVersion;
+  try {
+    await checkPeerVersionImpl({ nowMs }, { env });
+  } catch (error) {
+    try {
+      appendLogImpl({ event: "peer-version-check-failed", error: errorMessage(error) });
+    } catch {
+      // The bridge reconcile has already completed; an add-on log failure must not affect it.
     }
   }
 

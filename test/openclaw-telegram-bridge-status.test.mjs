@@ -14,6 +14,7 @@ function statusDependencies(selfId, remoteOnline) {
     listPendingTasks: () => [],
     loadLease: async () => null,
     readBridgeLogSummary: () => null,
+    readPeerVersionState: () => null,
     codeVersion: null,
     probes: {
       [selfId]: async () => {
@@ -51,6 +52,7 @@ test("summarizeStatus shows the health block right under the running node", asyn
     now: () => nowMs,
     loadLease: async () => ({ holder: "windows", heartbeatAt: new Date(nowMs - 5_000).toISOString(), ttlSeconds: 90, reason: "renew" }),
     readBridgeLogSummary: () => ({ conflicts: 12, starts: 1, lastError: "Error: Telegram HTTP request failed 409" }),
+    readPeerVersionState: () => ({ local: "622fb5c", mac: "622fb5c", match: true }),
     codeVersion: "622fb5c"
   });
   const lines = status.split("\n");
@@ -60,4 +62,5 @@ test("summarizeStatus shows the health block right under the running node", asyn
   assert.match(lines[nodeLine + 2], /^桥：.*12 次 Telegram 409 冲突/);
   assert.equal(lines[nodeLine + 3], "最近错误：Error: Telegram HTTP request failed 409");
   assert.equal(lines[nodeLine + 4], "代码版本：622fb5c");
+  assert.equal(lines[nodeLine + 5], "Mac 代码版本：622fb5c（与 Windows 一致）");
 });

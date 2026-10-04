@@ -11,6 +11,10 @@ const LOAD_ENV_EXEMPTIONS = new Map([
   [
     "satellite/mac-agent.mjs",
     "Mac satellite agent uses only fixed paths and process arguments; it does not read process.env."
+  ],
+  [
+    "src/version.mjs",
+    "Only prints the git/VERSION code version for deploy-mac-brain.ps1; it does not read process.env."
   ]
 ]);
 

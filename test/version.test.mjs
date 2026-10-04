@@ -32,3 +32,26 @@ test("readCodeVersion returns null outside a git checkout instead of throwing", 
 
   assert.equal(await readCodeVersion({ execFileImpl: git.execFileImpl }), null);
 });
+
+test("readCodeVersion prefers the VERSION file written by the Mac deploy", async () => {
+  const git = fakeGit({ "rev-parse": "622fb5c\n", status: "" });
+  const readFileImpl = async (file) => {
+    assert.match(file, /pai-brain[\\/]VERSION$/);
+    return "ad442d9\n";
+  };
+
+  assert.equal(
+    await readCodeVersion({ cwd: "pai-brain", execFileImpl: git.execFileImpl, readFileImpl }),
+    "ad442d9"
+  );
+  assert.deepEqual(git.calls, []);
+});
+
+test("readCodeVersion falls back to git when there is no VERSION file", async () => {
+  const git = fakeGit({ "rev-parse": "622fb5c\n", status: "" });
+  const readFileImpl = async () => {
+    throw Object.assign(new Error("missing"), { code: "ENOENT" });
+  };
+
+  assert.equal(await readCodeVersion({ execFileImpl: git.execFileImpl, readFileImpl }), "622fb5c");
+});

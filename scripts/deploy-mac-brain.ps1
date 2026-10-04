@@ -144,12 +144,25 @@ try {
   $ArchivePath = Join-Path $TempDir "pai-brain-deploy.tar.gz"
   $PreparedPlist = Join-Path $TempDir "com.pai.brain-supervisor.plist"
 
+  # Mac 的目录不是 git 检出，靠这个文件回答「它跑的是哪一版」（/status 与看门狗比对）。
+  $VersionResult = Invoke-NativeChecked `
+    -FilePath "node" `
+    -ArgumentList @((Join-Path $RepoRoot "src\version.mjs")) `
+    -FailureMessage "读取本机代码版本失败"
+  $CodeVersion = ([string]($VersionResult.Output | Select-Object -Last 1)).Trim()
+  if ([string]::IsNullOrWhiteSpace($CodeVersion)) {
+    throw "读取本机代码版本失败：不是 git 检出？"
+  }
+  [System.IO.File]::WriteAllText((Join-Path $TempDir "VERSION"), "$CodeVersion`n", [System.Text.UTF8Encoding]::new($false))
+
   Invoke-NativeChecked `
     -FilePath "tar" `
     -ArgumentList @(
       "-czf", $ArchivePath,
       "-C", $RepoRoot,
-      "src", "satellite", "scripts", "config", "package.json"
+      "src", "satellite", "scripts", "config", "package.json",
+      "-C", $TempDir,
+      "VERSION"
     ) `
     -FailureMessage "打包 Mac 大脑代码失败" | Out-Null
 
@@ -161,9 +174,11 @@ try {
     -FilePath "scp" `
     -ArgumentList (@($SshCommon) + @($ArchivePath, "${MacHost}:$RemoteArchive")) `
     -FailureMessage "上传 Mac 大脑代码包失败" | Out-Null
+  # 先删旧代码目录再解压：只解压不删，Windows 这边删掉的文件会在 Mac 上一直残留
+  # （2026-10-04 实测残留 10 个）。data/ 不在其中，状态与日志不受影响。
   Invoke-NativeChecked `
     -FilePath "ssh" `
-    -ArgumentList (@($SshCommon) + @($MacHost, "tar", "-xzf", $RemoteArchive, "-C", $MacBrainRoot)) `
+    -ArgumentList (@($SshCommon) + @($MacHost, "cd '$MacBrainRoot' && rm -rf src satellite scripts config && tar -xzf '$RemoteArchive'")) `
     -FailureMessage "解压 Mac 大脑代码包失败" | Out-Null
   Invoke-NativeChecked `
     -FilePath "ssh" `
@@ -210,7 +225,7 @@ try {
     throw "Mac supervisor 未在预期时间内启动"
   }
 
-  Write-Host "Mac 大脑代码与 LaunchAgent 已部署。"
+  Write-Host "Mac 大脑代码与 LaunchAgent 已部署（版本 $CodeVersion）。"
   Write-Host "LaunchAgent：$RemotePlist"
   Write-Host "Supervisor 进程：运行中"
 }

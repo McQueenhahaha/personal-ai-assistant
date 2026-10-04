@@ -214,6 +214,10 @@ test("worker reconcile failure cannot prevent main bridge reconcile", async () =
       calls.push("health");
       throw new Error("health check boom");
     },
+    checkPeerVersion: async () => {
+      calls.push("version");
+      throw new Error("ssh: connect to host timed out");
+    },
     ensureWorkerLoopRunning: async () => {
       calls.push("worker");
       throw new Error("worker reconcile boom");
@@ -223,9 +227,11 @@ test("worker reconcile failure cannot prevent main bridge reconcile", async () =
   });
 
   assert.equal(result, bridgeResult);
-  assert.deepEqual(calls, ["bridge", "health", "worker", "watcher"]);
+  assert.deepEqual(calls, ["bridge", "health", "version", "worker", "watcher"]);
   assert.equal(logs[0].event, "bridge-health-check-failed");
   assert.equal("state" in logs[0], false, "must not disturb readLastLoggedState");
+  assert.equal(logs[1].event, "peer-version-check-failed");
+  assert.equal("state" in logs[1], false, "must not disturb readLastLoggedState");
   assert.equal(logs.at(-1).event, "worker-loop-reconcile-failed");
 });
 

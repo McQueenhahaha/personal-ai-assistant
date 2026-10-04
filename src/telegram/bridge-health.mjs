@@ -108,7 +108,7 @@ export function nextHealthAlert(previousHealth, decision) {
 const NODE_LABELS = { windows: "Windows", mac: "Mac" };
 
 // /status 的健康区块：10-03 那次桥一天重启上千次，/status 却一个字都不提。
-export function formatHealthLines({ lease, nowMs, bridgeLog, codeVersion }) {
+export function formatHealthLines({ lease, nowMs, bridgeLog, codeVersion, peerVersion }) {
   const lines = [];
   if (isLeaseValid(lease)) {
     const holder = NODE_LABELS[lease.holder] || lease.holder;
@@ -127,6 +127,11 @@ export function formatHealthLines({ lease, nowMs, bridgeLog, codeVersion }) {
     lines.push(`最近错误：${bridgeLog.lastError ?? "近 1 小时无"}`);
   }
   lines.push(`代码版本：${codeVersion ?? "未知"}`);
+  // 由 Windows 看门狗比对后落盘（peer-version.json）；Mac 上没有这个文件就不显示。
+  if (peerVersion) {
+    lines.push(`Mac 代码版本：${peerVersion.mac ?? "未知（旧部署）"}`
+      + (peerVersion.match ? "（与 Windows 一致）" : "⚠️ 与 Windows 不一致，需运行 deploy-mac-brain.ps1"));
+  }
   return lines;
 }
 

@@ -173,3 +173,17 @@ test("formatHealthLines degrades gracefully without a lease or a JSONL log", () 
     "代码版本：abc1234（含未提交改动）"
   ]);
 });
+
+test("formatHealthLines adds the Mac code version once the watchdog has compared it", () => {
+  const base = { lease: null, nowMs: NOW_MS, bridgeLog: null, codeVersion: "ad442d9" };
+
+  assert.equal(
+    formatHealthLines({ ...base, peerVersion: { local: "ad442d9", mac: "ad442d9", match: true } }).at(-1),
+    "Mac 代码版本：ad442d9（与 Windows 一致）"
+  );
+  assert.equal(
+    formatHealthLines({ ...base, peerVersion: { local: "ad442d9", mac: null, match: false } }).at(-1),
+    "Mac 代码版本：未知（旧部署）⚠️ 与 Windows 不一致，需运行 deploy-mac-brain.ps1"
+  );
+  assert.equal(formatHealthLines({ ...base, peerVersion: null }).at(-1), "代码版本：ad442d9");
+});

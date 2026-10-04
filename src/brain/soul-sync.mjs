@@ -246,3 +246,21 @@ export async function readSoulLease({ host, key }, dependencies = {}) {
     throw new Error(`解析远端大脑租约失败：${error.message || String(error)}`);
   }
 }
+
+// VERSION 由 deploy-mac-brain.ps1 写入。没有它说明 Mac 还是旧部署 —— 那是要报的
+// 「版本未知」，不是读取失败；只有 SSH 本身失败（退出码 255 等）才抛出。
+export async function readPeerCodeVersion({ host, key }, dependencies = {}) {
+  const connection = validateConnection(host, key);
+  const spawnSyncImpl = dependencies.spawnSync || spawnSync;
+  const result = runSsh(spawnSyncImpl, [
+    ...scpBaseArgs(connection.key),
+    connection.host,
+    "cat",
+    "~/pai-brain/VERSION"
+  ]);
+  if (!result?.error && result?.status === 1 && /No such file/i.test(String(result.stderr || ""))) {
+    return null;
+  }
+  assertSuccess(result, "读取 Mac 代码版本失败");
+  return String(result.stdout || "").trim() || null;
+}

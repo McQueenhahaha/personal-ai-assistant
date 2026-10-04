@@ -19,6 +19,7 @@ import { installFileLogging } from "./logging.mjs";
 import { loadLease } from "./brain/lease.mjs";
 import { defaultBridgeLogFile, formatHealthLines, readBridgeLogSummary } from "./telegram/bridge-health.mjs";
 import { readCodeVersion } from "./version.mjs";
+import { readPeerVersionState } from "./brain/peer-version.mjs";
 
 const DEFAULT_MESSAGE_FILE = "./.openclaw/state/agents/main/sessions/sessions.json.telegram-messages.json";
 const DEFAULT_STATE_FILE = "./data/state/openclaw-telegram-bridge-state.json";
@@ -205,7 +206,8 @@ export async function summarizeStatus(dependencies = {}) {
     lease: await (dependencies.loadLease || loadLease)(dependencies.leaseFile || resolveFromCwd(DEFAULT_LEASE_FILE)),
     nowMs,
     bridgeLog: (dependencies.readBridgeLogSummary || readBridgeLogSummary)(defaultBridgeLogFile(), nowMs),
-    codeVersion: dependencies.codeVersion !== undefined ? dependencies.codeVersion : runningCodeVersion
+    codeVersion: dependencies.codeVersion !== undefined ? dependencies.codeVersion : runningCodeVersion,
+    peerVersion: (dependencies.readPeerVersionState || readPeerVersionState)()
   });
 
   return [

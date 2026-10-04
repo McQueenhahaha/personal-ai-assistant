@@ -46,7 +46,7 @@ function expandHome(value, home) {
   return input;
 }
 
-function resolvePeerConnection(selfId, env, home) {
+export function resolvePeerConnection(selfId, env, home) {
   if (selfId !== "windows") {
     // Windows 没有 SSH 服务端；Mac 只用 Tailscale ping 探活，不建立 SSH 连接。
     return null;

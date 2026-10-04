@@ -7,6 +7,7 @@ import path from "node:path";
 import {
   pullSoul,
   pushSoul,
+  readPeerCodeVersion,
   readSoulLease,
   SOUL_FILES
 } from "../src/brain/soul-sync.mjs";
@@ -236,4 +237,35 @@ test("灵魂包里单个文件不合法时跳过它，而不是让整包都落�
   );
   // 跳过必须出声，否则就是"看着同步成功、其实少了东西"。
   assert.match(warnings.join(" "), /未采纳/);
+});
+
+test("readPeerCodeVersion reads the VERSION file the Mac deploy wrote", async () => {
+  const calls = [];
+  const version = await readPeerCodeVersion(CONNECTION, {
+    spawnSync(command, args) {
+      calls.push({ command, args });
+      return { status: 0, stdout: "ad442d9\n", stderr: "" };
+    }
+  });
+
+  assert.equal(version, "ad442d9");
+  assert.equal(calls[0].command, "ssh");
+  assert.deepEqual(calls[0].args.slice(-3), [CONNECTION.host, "cat", "~/pai-brain/VERSION"]);
+});
+
+test("readPeerCodeVersion reports a deploy without VERSION as null, not as a failure", async () => {
+  const version = await readPeerCodeVersion(CONNECTION, {
+    spawnSync: () => ({ status: 1, stdout: "", stderr: "cat: /Users/x/pai-brain/VERSION: No such file or directory" })
+  });
+
+  assert.equal(version, null);
+});
+
+test("readPeerCodeVersion throws when the Mac cannot be reached", async () => {
+  await assert.rejects(
+    readPeerCodeVersion(CONNECTION, {
+      spawnSync: () => ({ status: 255, stdout: "", stderr: "ssh: connect to host 100.64.0.10 port 22: Operation timed out" })
+    }),
+    /读取 Mac 代码版本失败.*timed out/
+  );
 });
